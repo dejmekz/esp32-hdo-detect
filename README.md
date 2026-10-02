@@ -4,7 +4,6 @@
 - HDO přes PC817C: GPIO1, aktivní LOW
 - OLED SSD1306 I2C: SDA GPIO8, SCL GPIO10
 - OLED adresa: 0x3C (pokud displej používá 0x3D, změň `OLED_I2C_ADDRESS` v `src/config.h`)
-- DS18B20 zatím není implementován
 
 U HDO vstupu použij externí pull-up na 3,3 V (např. 10 kΩ), pokud jej již nezajišťuje tvoje zapojení PC817C.
 
@@ -28,8 +27,7 @@ U HDO vstupu použij externí pull-up na 3,3 V (např. 10 kΩ), pokud jej již n
 Zachována původní témata:
 - `hdo/availability`: `ONLINE` / LWT `OFFLINE`
 - `hdo/status`: `ON` / `OFF`
-- `hdo/temperature`: `unknown`
-- `hdo/state`: JSON, například `{"hdo":true,"temperature":null}`
+- `hdo/state`: JSON, například `{"hdo":true}`
 
 ## Poznámky
 - Wi-Fi se zkouší připojit opakovaně, bez nekonečné blokující smyčky.

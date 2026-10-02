@@ -13,9 +13,6 @@
 
 #include "config.h"
 
-// DS18B20 zatím není implementován. MQTT bude hlásit unknown/null
-// a OLED zobrazí --.- C.
-
 // Log s časem od startu v ms, např. "[   12345] WiFi: connected".
 #define LOG(fmt, ...)                                                   \
     do {                                                                \
@@ -68,12 +65,6 @@ void publishHdo()
     mqttClient.publish(MQTT_HDO_TOPIC, hdoState ? "ON" : "OFF", true);
 }
 
-void publishTemperature()
-{
-    if (mqttClient.connected()) {
-        mqttClient.publish(MQTT_TEMPERATURE_TOPIC, "unknown", true);
-    }
-}
 
 void publishState()
 {
@@ -81,7 +72,7 @@ void publishState()
 
     char payload[64];
     snprintf(payload, sizeof(payload),
-             "{\"hdo\":%s,\"temperature\":null}",
+             "{\"hdo\":%s}",
              hdoState ? "true" : "false");
     mqttClient.publish(MQTT_STATE_TOPIC, payload, true);
 }
@@ -89,7 +80,6 @@ void publishState()
 void publishAll()
 {
     publishHdo();
-    publishTemperature();
     publishState();
 }
 
@@ -375,10 +365,8 @@ void refreshOLED()
     display.print("HDO:  ");
     display.println(hdoState ? "ACTIVE" : "INACTIVE");
 
-    display.setCursor(0, OLED_BODY_Y + 3 * OLED_LINE_HEIGHT);
-    display.print("Temp: --.- C");
 
-    display.setCursor(0, OLED_BODY_Y + 4 * OLED_LINE_HEIGHT);
+    display.setCursor(0, OLED_BODY_Y + 3 * OLED_LINE_HEIGHT);
     if (WiFi.status() == WL_CONNECTED) {
         display.print(WiFi.localIP());
     } else {

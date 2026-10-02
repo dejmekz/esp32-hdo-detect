@@ -23,7 +23,7 @@ constexpr int8_t OLED_RESET_PIN = -1;
 // Font velikosti 1 má výšku 8 px.
 constexpr int16_t OLED_HEADER_Y = 4;     // vystředěno ve žlutém pásu
 constexpr int16_t OLED_BODY_Y = 18;      // první řádek v modré části
-constexpr int16_t OLED_LINE_HEIGHT = 9;  // 5 řádků: 18..61
+constexpr int16_t OLED_LINE_HEIGHT = 12; // 4 řádky: 18..61
 
 // HDO active = LOW. Interní pull-up je zapnutý jako záloha,
 // doporučen je i externí pull-up na 3.3 V (např. 10 kΩ).
@@ -72,6 +72,5 @@ constexpr uint16_t MQTT_PORT = 1883;
 
 // MQTT topics - zachována kompatibilita s původním projektem.
 constexpr char MQTT_HDO_TOPIC[] = "hdo/status";
-constexpr char MQTT_TEMPERATURE_TOPIC[] = "hdo/temperature";
 constexpr char MQTT_STATE_TOPIC[] = "hdo/state";
 constexpr char MQTT_AVAILABILITY_TOPIC[] = "hdo/availability";
