@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Arduino.h>
+#include <WiFi.h>
 
 #if __has_include("secrets.h")
 #include "secrets.h"
@@ -40,6 +41,23 @@ constexpr unsigned long WIFI_RETRY_INTERVAL_MS = 30000;
 constexpr unsigned long MQTT_RETRY_INTERVAL_MS = 5000;
 constexpr unsigned long MDNS_QUERY_TIMEOUT_MS = 2000;
 constexpr unsigned long OLED_REFRESH_INTERVAL_MS = 500;
+
+// ============================================================
+// Síť, OTA, logování
+// ============================================================
+
+// Hostname pro Wi-Fi, mDNS a OTA => OTA adresa "hdo-monitor.local".
+constexpr char DEVICE_HOSTNAME[] = "hdo-monitor";
+
+// Vysílací výkon Wi-Fi během OTA. Při plném výkonu (19.5 dBm) způsoboval
+// souběžný zápis do flash a vysílání brownout reset desky.
+constexpr wifi_power_t OTA_WIFI_TX_POWER = WIFI_POWER_11dBm;
+
+// Logování na Serial (USB CDC). false = vypnuto.
+constexpr bool SERIAL_LOGGING = true;
+constexpr unsigned long SERIAL_BAUD = 115200;
+// Jak dlouho po startu čekat na otevřený sériový monitor.
+constexpr unsigned long SERIAL_WAIT_MS = 1500;
 
 // ============================================================
 // MQTT

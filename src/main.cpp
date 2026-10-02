@@ -1,10 +1,12 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <ESPmDNS.h>
+#include <ArduinoOTA.h>
 #include <Wire.h>
 #include <PubSubClient.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
+#include <esp_system.h>
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -13,6 +15,14 @@
 
 // DS18B20 zatím není implementován. MQTT bude hlásit unknown/null
 // a OLED zobrazí --.- C.
+
+// Log s časem od startu v ms, např. "[   12345] WiFi: connected".
+#define LOG(fmt, ...)                                                   \
+    do {                                                                \
+        if (SERIAL_LOGGING) {                                           \
+            Serial.printf("[%8lu] " fmt "\n", millis(), ##__VA_ARGS__); \
+        }                                                               \
+    } while (0)
 
 WiFiClient wifiClient;
 PubSubClient mqttClient(wifiClient);
@@ -23,8 +33,13 @@ Adafruit_SSD1306 display(128, 64, &Wire, OLED_RESET_PIN);
 bool hdoState = false;
 bool hdoRawState = false;
 bool oledReady = false;
-bool mdnsStarted = false;
+bool wifiConnected = false;
+bool mqttWasConnected = false;
+// ArduinoOTA.begin() spouští i mDNS; MDNS.begin() nelze volat dvakrát.
+bool networkServicesStarted = false;
 bool mqttServerResolved = false;
+int lastOtaPercent = -1;
+wifi_power_t normalTxPower = WIFI_POWER_19_5dBm;
 
 char mqttClientId[24];
 
@@ -78,12 +93,103 @@ void publishAll()
     publishState();
 }
 
+void showOledMessage(const char* line1, const char* line2)
+{
+    if (!oledReady) return;
+
+    display.clearDisplay();
+    display.setTextColor(SSD1306_WHITE);
+    display.setTextSize(1);
+    display.setCursor(0, OLED_HEADER_Y);
+    display.print(line1);
+    display.setCursor(0, OLED_BODY_Y);
+    display.print(line2);
+    display.display();
+}
+
+const char* otaErrorText(ota_error_t error)
+{
+    switch (error) {
+        case OTA_AUTH_ERROR:    return "auth failed";
+        case OTA_BEGIN_ERROR:   return "begin failed";
+        case OTA_CONNECT_ERROR: return "connect failed";
+        case OTA_RECEIVE_ERROR: return "receive failed";
+        case OTA_END_ERROR:     return "end failed";
+        default:                return "unknown";
+    }
+}
+
+const char* resetReasonText(esp_reset_reason_t reason)
+{
+    switch (reason) {
+        case ESP_RST_POWERON:  return "power on";
+        case ESP_RST_EXT:      return "external pin";
+        case ESP_RST_SW:       return "software";
+        case ESP_RST_PANIC:    return "panic";
+        case ESP_RST_INT_WDT:  return "interrupt watchdog";
+        case ESP_RST_TASK_WDT: return "task watchdog";
+        case ESP_RST_WDT:      return "watchdog";
+        case ESP_RST_BROWNOUT: return "brownout";
+        default:               return "unknown";
+    }
+}
+
+void setupOTA()
+{
+    ArduinoOTA.setHostname(DEVICE_HOSTNAME);
+    if (strlen(OTA_PASSWORD) > 0) {
+        ArduinoOTA.setPassword(OTA_PASSWORD);
+    }
+
+    ArduinoOTA.onStart([]() {
+        LOG("OTA: start (%s)",
+            ArduinoOTA.getCommand() == U_FLASH ? "firmware" : "filesystem");
+        lastOtaPercent = -1;
+        // Nižší výkon = nižší proudové špičky => bez brownout resetu.
+        normalTxPower = WiFi.getTxPower();
+        WiFi.setTxPower(OTA_WIFI_TX_POWER);
+        // Čisté odpojení LWT nespustí, proto OFFLINE ručně.
+        publishAvailability("OFFLINE");
+        mqttClient.disconnect();
+        showOledMessage("OTA UPDATE", "Starting...");
+    });
+
+    ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+        const int percent = total > 0 ? progress * 100 / total : 0;
+        if (percent == lastOtaPercent) return;
+        lastOtaPercent = percent;
+
+        if (percent % 10 == 0) LOG("OTA: %d %%", percent);
+
+        char line[24];
+        snprintf(line, sizeof(line), "Progress: %d %%", percent);
+        showOledMessage("OTA UPDATE", line);
+    });
+
+    ArduinoOTA.onEnd([]() {
+        LOG("OTA: done, restarting");
+        showOledMessage("OTA UPDATE", "Done, restarting...");
+    });
+
+    ArduinoOTA.onError([](ota_error_t error) {
+        LOG("OTA: error %u (%s)", error, otaErrorText(error));
+        WiFi.setTxPower(normalTxPower);
+        showOledMessage("OTA ERROR", otaErrorText(error));
+    });
+
+    ArduinoOTA.begin();
+    networkServicesStarted = true;
+    LOG("OTA: ready at %s.local%s", DEVICE_HOSTNAME,
+        strlen(OTA_PASSWORD) > 0 ? "" : " (NO PASSWORD)");
+}
+
 void startWiFi()
 {
+    LOG("WiFi: connecting to \"%s\"", WIFI_SSID);
     WiFi.persistent(false);
+    WiFi.setHostname(DEVICE_HOSTNAME);
     WiFi.mode(WIFI_STA);
     WiFi.setAutoReconnect(true);
-    WiFi.setHostname(mqttClientId);
     WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 }
 
@@ -94,8 +200,19 @@ void maintainWiFi()
     const unsigned long now = millis();
 
     if (WiFi.status() == WL_CONNECTED) {
+        if (!wifiConnected) {
+            wifiConnected = true;
+            LOG("WiFi: connected, IP %s, RSSI %d dBm",
+                WiFi.localIP().toString().c_str(), WiFi.RSSI());
+            if (!networkServicesStarted) setupOTA();
+        }
         wifiDisconnectedSince = 0;
         return;
+    }
+
+    if (wifiConnected) {
+        wifiConnected = false;
+        LOG("WiFi: disconnected (status %d)", WiFi.status());
     }
 
     if (wifiDisconnectedSince == 0) {
@@ -105,6 +222,8 @@ void maintainWiFi()
     }
 
     if (now - wifiDisconnectedSince >= WIFI_RETRY_INTERVAL_MS) {
+        LOG("WiFi: not connected for %lu s, restarting WiFi",
+            WIFI_RETRY_INTERVAL_MS / 1000);
         wifiDisconnectedSince = now;
         WiFi.disconnect();
         WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
@@ -145,18 +264,19 @@ bool resolveMqttServer()
         return true;
     }
 
-    if (!mdnsStarted) {
-        mdnsStarted = MDNS.begin(mqttClientId);
-        if (!mdnsStarted) return false;
-    }
+    if (!networkServicesStarted) return false;
 
     char hostname[sizeof(MQTT_HOST)];
     strncpy(hostname, MQTT_HOST, sizeof(hostname));
     hostname[strlen(hostname) - strlen(".local")] = '\0';
 
     const IPAddress ip = MDNS.queryHost(hostname, MDNS_QUERY_TIMEOUT_MS);
-    if (ip == IPAddress(0, 0, 0, 0)) return false;
+    if (ip == IPAddress(0, 0, 0, 0)) {
+        LOG("MQTT: mDNS lookup of %s failed", MQTT_HOST);
+        return false;
+    }
 
+    LOG("MQTT: %s resolved to %s", MQTT_HOST, ip.toString().c_str());
     mqttClient.setServer(ip, MQTT_PORT);
     mqttServerResolved = true;
     return true;
@@ -189,10 +309,13 @@ void connectMQTTIfNeeded()
     }
 
     if (connected) {
+        LOG("MQTT: connected as %s", mqttClientId);
         publishAvailability("ONLINE");
         publishAll();
         lastReport = millis();
     } else {
+        // Kódy viz PubSubClient.h (-2 = síť nedostupná, 4/5 = přihlášení).
+        LOG("MQTT: connect failed, state %d", mqttClient.state());
         // IP brokera se mohla změnit - příště přeložit znovu.
         mqttServerResolved = false;
     }
@@ -215,6 +338,7 @@ void updateHdo()
     if (raw == hdoState || now - hdoRawChangeTime < HDO_DEBOUNCE_MS) return;
 
     hdoState = raw;
+    LOG("HDO: %s", hdoState ? "ACTIVE" : "INACTIVE");
     publishHdo();
     publishState();
 }
@@ -264,8 +388,25 @@ void refreshOLED()
     display.display();
 }
 
+void setupSerial()
+{
+    if (!SERIAL_LOGGING) return;
+
+    Serial.begin(SERIAL_BAUD);
+#if ARDUINO_USB_CDC_ON_BOOT
+    // Bez připojeného PC nesmí zápis do USB CDC blokovat smyčku.
+    Serial.setTxTimeoutMs(0);
+    // Krátce počkat na sériový monitor, ať nezmizí úvodní výpis.
+    while (!Serial && millis() < SERIAL_WAIT_MS) {
+        delay(10);
+    }
+#endif
+}
+
 void setup()
 {
+    setupSerial();
+
     // Interní pull-up jako záloha k externímu rezistoru.
     pinMode(HDO_PIN, INPUT_PULLUP);
     hdoState = readHdo();
@@ -273,8 +414,15 @@ void setup()
 
     makeMqttClientId();
 
+    const esp_reset_reason_t resetReason = esp_reset_reason();
+    LOG("HDO monitor start, reset reason %d (%s), client ID %s",
+        static_cast<int>(resetReason), resetReasonText(resetReason),
+        mqttClientId);
+    LOG("HDO: initial state %s", hdoState ? "ACTIVE" : "INACTIVE");
+
     Wire.begin(OLED_SDA_PIN, OLED_SCL_PIN);
     oledReady = display.begin(SSD1306_SWITCHCAPVCC, OLED_I2C_ADDRESS);
+    if (!oledReady) LOG("OLED: not found at 0x%02X", OLED_I2C_ADDRESS);
 
     if (oledReady) {
         display.clearDisplay();
@@ -297,11 +445,22 @@ void setup()
 void loop()
 {
     maintainWiFi();
+
+    if (networkServicesStarted) {
+        ArduinoOTA.handle();
+    }
+
     connectMQTTIfNeeded();
 
     if (mqttClient.connected()) {
         mqttClient.loop();
     }
+
+    const bool mqttConnected = mqttClient.connected();
+    if (mqttWasConnected && !mqttConnected) {
+        LOG("MQTT: disconnected, state %d", mqttClient.state());
+    }
+    mqttWasConnected = mqttConnected;
 
     updateHdo();
 

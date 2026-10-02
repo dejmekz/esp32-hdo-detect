@@ -10,7 +10,19 @@ U HDO vstupu použij externí pull-up na 3,3 V (např. 10 kΩ), pokud jej již n
 
 ## Build
 1. Zkopíruj `src/secrets.example.h` na `src/secrets.h` a vyplň Wi-Fi/MQTT údaje (`secrets.h` je v `.gitignore`).
-2. Otevři adresář projektu ve VS Code s PlatformIO a proveď Build/Upload.
+2. Zkopíruj `ota.secret.ini.example` na `ota.secret.ini` a nastav stejné heslo jako `OTA_PASSWORD` v `secrets.h`.
+3. Otevři adresář projektu ve VS Code s PlatformIO a proveď Build/Upload (první nahrání přes USB).
+
+## OTA (aktualizace přes Wi-Fi)
+- Zařízení je dostupné jako `hdo-monitor.local` (hostname v `DEVICE_HOSTNAME`).
+- Upload: prostředí `ota`, tj. `pio run -e ota -t upload`.
+- Pokud Windows nepřeloží `.local`, dej do `upload_port` v `platformio.ini` IP adresu z OLED.
+- Během OTA se sníží vysílací výkon Wi-Fi (`OTA_WIFI_TX_POWER`), protože při plném výkonu docházelo k brownout resetu. Pomáhá i kondenzátor na 3,3 V.
+
+## Sériový log
+- Výstup jde přes nativní USB (115200), řádky mají čas od startu v ms.
+- Po startu se vypíše důvod resetu (např. `brownout`, `panic`) - užitečné při diagnostice.
+- Otevření portu běžným terminálem může desku resetovat; vypnutí logu: `SERIAL_LOGGING = false` v `config.h`.
 
 ## MQTT
 Zachována původní témata:
