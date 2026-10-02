@@ -394,8 +394,10 @@ void setupSerial()
 
     Serial.begin(SERIAL_BAUD);
 #if ARDUINO_USB_CDC_ON_BOOT
-    // Bez připojeného PC nesmí zápis do USB CDC blokovat smyčku.
-    Serial.setTxTimeoutMs(0);
+    // Když je USB v PC, ale port nikdo nečte, zápis po timeoutu vzdá
+    // a log se zahazuje. Hodnota 0 NESMÍ být použita: HWCDC pak
+    // podteče počítadlo pokusů a write() zablokuje smyčku natrvalo.
+    Serial.setTxTimeoutMs(SERIAL_TX_TIMEOUT_MS);
     // Krátce počkat na sériový monitor, ať nezmizí úvodní výpis.
     while (!Serial && millis() < SERIAL_WAIT_MS) {
         delay(10);

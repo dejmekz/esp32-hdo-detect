@@ -58,6 +58,8 @@ constexpr bool SERIAL_LOGGING = true;
 constexpr unsigned long SERIAL_BAUD = 115200;
 // Jak dlouho po startu čekat na otevřený sériový monitor.
 constexpr unsigned long SERIAL_WAIT_MS = 1500;
+// Max. čekání zápisu na USB, když port nikdo nečte (musí být > 0).
+constexpr uint32_t SERIAL_TX_TIMEOUT_MS = 10;
 
 // ============================================================
 // MQTT
