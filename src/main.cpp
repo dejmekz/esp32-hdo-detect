@@ -231,10 +231,10 @@ void refreshOLED()
     display.setTextColor(SSD1306_WHITE);
     display.setTextSize(1);
 
-    display.setCursor(0, 0);
+    display.setCursor(0, OLED_HEADER_Y);
     display.println("HDO MONITOR");
 
-    display.setCursor(0, 13);
+    display.setCursor(0, OLED_BODY_Y);
     display.print("WiFi: ");
     if (WiFi.status() == WL_CONNECTED) {
         display.print(WiFi.RSSI());
@@ -243,18 +243,18 @@ void refreshOLED()
         display.println("OFFLINE");
     }
 
-    display.setCursor(0, 25);
+    display.setCursor(0, OLED_BODY_Y + OLED_LINE_HEIGHT);
     display.print("MQTT: ");
     display.println(mqttClient.connected() ? "CONNECTED" : "OFFLINE");
 
-    display.setCursor(0, 37);
+    display.setCursor(0, OLED_BODY_Y + 2 * OLED_LINE_HEIGHT);
     display.print("HDO:  ");
     display.println(hdoState ? "ACTIVE" : "INACTIVE");
 
-    display.setCursor(0, 47);
+    display.setCursor(0, OLED_BODY_Y + 3 * OLED_LINE_HEIGHT);
     display.print("Temp: --.- C");
 
-    display.setCursor(0, 56);
+    display.setCursor(0, OLED_BODY_Y + 4 * OLED_LINE_HEIGHT);
     if (WiFi.status() == WL_CONNECTED) {
         display.print(WiFi.localIP());
     } else {

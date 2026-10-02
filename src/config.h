@@ -18,6 +18,12 @@ constexpr uint8_t OLED_SCL_PIN = 10;    // OLED I2C SCL
 constexpr uint8_t OLED_I2C_ADDRESS = 0x3C;
 constexpr int8_t OLED_RESET_PIN = -1;
 
+// Dvoubarevný OLED: řádky 0-15 žluté (hlavička), 16-63 modré.
+// Font velikosti 1 má výšku 8 px.
+constexpr int16_t OLED_HEADER_Y = 4;     // vystředěno ve žlutém pásu
+constexpr int16_t OLED_BODY_Y = 18;      // první řádek v modré části
+constexpr int16_t OLED_LINE_HEIGHT = 9;  // 5 řádků: 18..61
+
 // HDO active = LOW. Interní pull-up je zapnutý jako záloha,
 // doporučen je i externí pull-up na 3.3 V (např. 10 kΩ).
 constexpr uint8_t HDO_ACTIVE_LEVEL = LOW;
