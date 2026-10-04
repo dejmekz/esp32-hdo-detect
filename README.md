@@ -76,38 +76,76 @@ Stav se publikuje při změně HDO, po připojení k brokeru a každých 60 s
 (`REPORT_INTERVAL_MS`); všechny zprávy jsou retained.
 
 ### openHAB
-Potřebné doplňky: **MQTT Binding** a **JSONPath Transformation**.
-Příklad textové konfigurace (broker uprav podle sebe; pokud už bridge
-na broker máš, přidej jen `Thing topic hdo` do něj):
+Ověřeno na openHAB 5.2. Potřebné doplňky: **MQTT Binding**,
+**JSONPath Transformation** a pro sitemapu **Map Transformation**.
+
+Konfigurace počítá s existujícím bridge na broker s UID
+`mqtt:broker:mosquitto` - Thing se k němu jen připojí, stávající soubory
+není třeba upravovat. Pokud má tvůj bridge jiné UID, změň ho v `hdo.things`
+(v závorce) i v `hdo.items` (`mqtt:topic:<bridge>:hdo:...`). Pokud bridge
+ještě nemáš, založ ho, např.:
+```
+Bridge mqtt:broker:mosquitto "Mosquitto" [ host="127.0.0.1", port=1883, username="...", password="..." ]
+```
 
 `things/hdo.things`
 ```
-Bridge mqtt:broker:mosquitto "Mosquitto" [ host="raspi4server.local", port=1883 ] {
-    Thing topic hdo "HDO monitor" [ availabilityTopic="hdo/availability", payloadAvailable="ONLINE", payloadNotAvailable="OFFLINE" ] {
-        Channels:
-            Type switch : hdo    "HDO"          [ stateTopic="hdo/status", on="ON", off="OFF" ]
-            Type number : rssi   "Wi-Fi signal" [ stateTopic="hdo/state", transformationPattern="JSONPATH:$.rssi", unit="dBm" ]
-            Type number : uptime "Uptime"       [ stateTopic="hdo/state", transformationPattern="JSONPATH:$.uptime", unit="s" ]
-            Type string : reset  "Reset reason" [ stateTopic="hdo/state", transformationPattern="JSONPATH:$.reset" ]
-            Type string : ip     "IP address"   [ stateTopic="hdo/state", transformationPattern="JSONPATH:$.ip" ]
-    }
+Thing mqtt:topic:mosquitto:hdo "HDO monitor" (mqtt:broker:mosquitto) @ "HDO"
+  [ availabilityTopic="hdo/availability", payloadAvailable="ONLINE", payloadNotAvailable="OFFLINE" ]
+{
+  Channels:
+    Type switch : hdo         "HDO (nízký tarif)"     [ stateTopic="hdo/status", on="ON", off="OFF" ]
+    Type switch : reachable   "Dostupnost"            [ stateTopic="hdo/availability", on="ONLINE", off="OFFLINE" ]
+    Type number : rssi        "WiFi Signal Strength"  [ stateTopic="hdo/state", transformationPattern="JSONPATH:$.rssi", unit="dBm" ]
+    Type number : uptime      "Up time"               [ stateTopic="hdo/state", transformationPattern="JSONPATH:$.uptime", unit="s" ]
+    Type string : reset       "Reset reason"          [ stateTopic="hdo/state", transformationPattern="JSONPATH:$.reset" ]
+    Type string : ip          "IP address"            [ stateTopic="hdo/state", transformationPattern="JSONPATH:$.ip" ]
 }
 ```
 
-`items/hdo.items`
+`items/hdo.items` (nadřazená skupina `MainGroup` je jen příklad - uprav nebo vynech)
 ```
-Switch      HDO_Active      "HDO [%s]"                { channel="mqtt:topic:mosquitto:hdo:hdo" }
-Number      HDO_RSSI        "Wi-Fi signal [%d dBm]"   { channel="mqtt:topic:mosquitto:hdo:rssi" }
-Number:Time HDO_Uptime      "Uptime [%.0f s]"         { channel="mqtt:topic:mosquitto:hdo:uptime" }
-String      HDO_ResetReason "Reset reason [%s]"       { channel="mqtt:topic:mosquitto:hdo:reset" }
-String      HDO_IP          "IP address [%s]"         { channel="mqtt:topic:mosquitto:hdo:ip" }
+Group        gHdo             "HDO"                    <energy>            (MainGroup)
+
+Switch       HDO_LowTariff    "Nízký tarif [%s]"       <energy>            (gHdo)  {channel="mqtt:topic:mosquitto:hdo:hdo"}
+Switch       HDO_Reachable    "Dostupnost [%s]"                            (gHdo)  {channel="mqtt:topic:mosquitto:hdo:reachable"}
+Number       HDO_RSSI         "RSSI [%d dBm]"          <qualityofservice>  (gHdo)  {channel="mqtt:topic:mosquitto:hdo:rssi"}
+Number:Time  HDO_UpTime       "Běží [%.1f h]"          <time>              (gHdo)  {channel="mqtt:topic:mosquitto:hdo:uptime"}
+String       HDO_ResetReason  "Důvod restartu [%s]"    <error>             (gHdo)  {channel="mqtt:topic:mosquitto:hdo:reset"}
+String       HDO_IP           "IP adresa [%s]"         <network>           (gHdo)  {channel="mqtt:topic:mosquitto:hdo:ip"}
 ```
 
-- Kanál `hdo` nemá `commandTopic`, je tedy jen pro čtení.
+`transform/hdo.map`
+```
+ON=NT (nízký)
+OFF=VT (vysoký)
+NULL=Neznámo
+UNDEF=Neznámo
+```
+
+Rámec do sitemapy (např. `sitemaps/default.sitemap`); `switch2online.map`
+převádí ON/OFF na ONLINE/OFFLINE - pokud ho nemáš, vynech `MAP(...)`:
+```
+  Frame label="HDO"
+  {
+    Text item=HDO_LowTariff label="Tarif [MAP(hdo.map):%s]" icon="energy" valuecolor=[ON="green", OFF="orange"] {
+      Text item=HDO_Reachable label="Dostupnost [MAP(switch2online.map):%s]" valuecolor=[ON="green", OFF="red"]
+      Text item=HDO_RSSI
+      Text item=HDO_UpTime
+      Text item=HDO_ResetReason valuecolor=[=="brownout"="red", =="task watchdog"="red", =="panic"="red"]
+      Text item=HDO_IP
+    }
+  }
+```
+
+- Kanály nemají `commandTopic`, jsou jen pro čtení; v sitemapě jsou proto
+  jako `Text`, ne `Switch` (přepnutí v UI by jen změnilo stav položky).
 - Díky `availabilityTopic` přejde Thing do stavu OFFLINE, když zařízení
-  vypadne (LWT) nebo se restartuje kvůli OTA.
-- Upozornění/pravidla lze stavět např. na změně `HDO_ResetReason` na
-  `brownout` nebo `task watchdog`.
+  vypadne (LWT) nebo se restartuje kvůli OTA; totéž ukazuje `HDO_Reachable`.
+- `HDO_LowTariff` = ON znamená nízký tarif (NT). Na něj lze navázat pravidla,
+  např. spínání ohřevu.
+- Upozornění lze stavět na změně `HDO_ResetReason` na `brownout`,
+  `task watchdog` nebo `panic`.
 
 ### Home Assistant (volitelné)
 Ve výchozím stavu vypnuto. Po nastavení `HA_DISCOVERY = true` v `config.h`
