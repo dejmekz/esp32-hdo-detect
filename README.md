@@ -63,7 +63,65 @@ restartem pošle do `hdo/availability` hodnotu `OFFLINE`, po startu (~5 s) zase 
 Zachována původní témata:
 - `hdo/availability`: `ONLINE` / LWT `OFFLINE`
 - `hdo/status`: `ON` / `OFF`
-- `hdo/state`: JSON, například `{"hdo":true}`
+- `hdo/state`: JSON se stavem a diagnostikou, například
+  ```json
+  {"hdo":true,"rssi":-62,"uptime":86400,"ip":"192.168.1.50","reset":"power on"}
+  ```
+  `uptime` je v sekundách, `reset` je důvod posledního restartu (např. `brownout`,
+  `task watchdog`). Klíč `hdo` zůstal, nové klíče starší konzumenty neruší.
+
+Stav se publikuje při změně HDO, po připojení k brokeru a každých 60 s
+(`REPORT_INTERVAL_MS`); všechny zprávy jsou retained.
+
+### openHAB
+Potřebné doplňky: **MQTT Binding** a **JSONPath Transformation**.
+Příklad textové konfigurace (broker uprav podle sebe; pokud už bridge
+na broker máš, přidej jen `Thing topic hdo` do něj):
+
+`things/hdo.things`
+```
+Bridge mqtt:broker:mosquitto "Mosquitto" [ host="raspi4server.local", port=1883 ] {
+    Thing topic hdo "HDO monitor" [ availabilityTopic="hdo/availability", payloadAvailable="ONLINE", payloadNotAvailable="OFFLINE" ] {
+        Channels:
+            Type switch : hdo    "HDO"          [ stateTopic="hdo/status", on="ON", off="OFF" ]
+            Type number : rssi   "Wi-Fi signal" [ stateTopic="hdo/state", transformationPattern="JSONPATH:$.rssi", unit="dBm" ]
+            Type number : uptime "Uptime"       [ stateTopic="hdo/state", transformationPattern="JSONPATH:$.uptime", unit="s" ]
+            Type string : reset  "Reset reason" [ stateTopic="hdo/state", transformationPattern="JSONPATH:$.reset" ]
+            Type string : ip     "IP address"   [ stateTopic="hdo/state", transformationPattern="JSONPATH:$.ip" ]
+    }
+}
+```
+
+`items/hdo.items`
+```
+Switch      HDO_Active      "HDO [%s]"                { channel="mqtt:topic:mosquitto:hdo:hdo" }
+Number      HDO_RSSI        "Wi-Fi signal [%d dBm]"   { channel="mqtt:topic:mosquitto:hdo:rssi" }
+Number:Time HDO_Uptime      "Uptime [%.0f s]"         { channel="mqtt:topic:mosquitto:hdo:uptime" }
+String      HDO_ResetReason "Reset reason [%s]"       { channel="mqtt:topic:mosquitto:hdo:reset" }
+String      HDO_IP          "IP address [%s]"         { channel="mqtt:topic:mosquitto:hdo:ip" }
+```
+
+- Kanál `hdo` nemá `commandTopic`, je tedy jen pro čtení.
+- Díky `availabilityTopic` přejde Thing do stavu OFFLINE, když zařízení
+  vypadne (LWT) nebo se restartuje kvůli OTA.
+- Upozornění/pravidla lze stavět např. na změně `HDO_ResetReason` na
+  `brownout` nebo `task watchdog`.
+
+### Home Assistant (volitelné)
+Ve výchozím stavu vypnuto. Po nastavení `HA_DISCOVERY = true` v `config.h`
+zařízení po každém připojení k brokeru publikuje (retained) MQTT discovery
+konfiguraci do `homeassistant/.../config` a v HA se samo objeví zařízení
+**HDO monitor** s entitami:
+- HDO (binary sensor, `hdo/status`)
+- diagnostika: Wi-Fi signal, Uptime, Reset reason, IP address (z `hdo/state`)
+
+Dostupnost entit řídí `hdo/availability`. Verze firmwaru (čas sestavení) je
+v informacích o zařízení, takže je vidět, zda OTA prošla.
+
+V HA musí být zapnutá MQTT integrace s discovery (výchozí stav). Pokud máš
+HDO senzor nadefinovaný ručně v `configuration.yaml`, ruční konfiguraci
+odstraň - jinak bude v HA dvakrát. Odebrání zařízení z HA po vypnutí discovery: smaž retained zprávy
+`homeassistant/+/hdo_c3_xxxxxx/+/config` (např. MQTT Explorerem).
 
 ## Poznámky
 - Wi-Fi se zkouší připojit opakovaně, bez nekonečné blokující smyčky.

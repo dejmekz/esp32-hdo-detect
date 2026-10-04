@@ -89,3 +89,12 @@ constexpr uint16_t MQTT_PORT = 1883;
 constexpr char MQTT_HDO_TOPIC[] = "hdo/status";
 constexpr char MQTT_STATE_TOPIC[] = "hdo/state";
 constexpr char MQTT_AVAILABILITY_TOPIC[] = "hdo/availability";
+
+// Buffer PubSubClient (výchozí 256 B) - discovery zprávy jsou delší.
+constexpr uint16_t MQTT_BUFFER_SIZE = 768;
+
+// Volitelné Home Assistant MQTT discovery: po připojení k brokeru se
+// publikují (retained) konfigurace entit, HA zařízení přidá samo.
+// Pro openHAB (ruční Thing, viz README) nech vypnuté.
+constexpr bool HA_DISCOVERY = false;
+constexpr char HA_DISCOVERY_PREFIX[] = "homeassistant";

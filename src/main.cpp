@@ -7,6 +7,7 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 #include <esp_system.h>
+#include <esp_timer.h>
 #include <esp_task_wdt.h>
 #include <math.h>
 #include <stdio.h>
@@ -43,6 +44,12 @@ uint8_t mqttFailures = 0;
 wifi_power_t normalTxPower = WIFI_POWER_19_5dBm;
 
 char mqttClientId[24];
+char mqttNodeId[24];
+// Nastaví setup(); publikuje se v hdo/state.
+const char* resetReasonName = "unknown";
+
+// Čas sestavení - v HA (sw_version) a v logu je vidět, zda OTA prošla.
+constexpr char FIRMWARE_BUILD[] = __DATE__ " " __TIME__;
 
 unsigned long hdoRawChangeTime = 0;
 unsigned long lastReport = 0;
@@ -72,15 +79,108 @@ void publishHdo()
 }
 
 
+// Stav + diagnostika. Klíč "hdo" zůstává kvůli kompatibilitě.
 void publishState()
 {
     if (!mqttClient.connected()) return;
 
-    char payload[64];
+    // esp_timer je 64bitový, millis() by přetekl po 49 dnech.
+    const unsigned long uptimeS =
+        static_cast<unsigned long>(esp_timer_get_time() / 1000000);
+
+    char payload[160];
     snprintf(payload, sizeof(payload),
-             "{\"hdo\":%s}",
-             hdoState ? "true" : "false");
+             "{\"hdo\":%s,\"rssi\":%d,\"uptime\":%lu,\"ip\":\"%s\","
+             "\"reset\":\"%s\"}",
+             hdoState ? "true" : "false",
+             static_cast<int>(WiFi.RSSI()),
+             uptimeS,
+             WiFi.localIP().toString().c_str(),
+             resetReasonName);
     mqttClient.publish(MQTT_STATE_TOPIC, payload, true);
+}
+
+// Jedna entita pro Home Assistant discovery. entityFields = JSON
+// položky specifické pro entitu (bez složených závorek); společné
+// položky (unique_id, availability, device) se doplní zde.
+void publishDiscoveryEntity(const char* component, const char* objectId,
+                            const char* entityFields)
+{
+    char topic[96];
+    snprintf(topic, sizeof(topic), "%s/%s/%s/%s/config",
+             HA_DISCOVERY_PREFIX, component, mqttNodeId, objectId);
+
+    char payload[MQTT_BUFFER_SIZE - sizeof(topic) - 8];
+    const int len = snprintf(
+        payload, sizeof(payload),
+        "{%s,"
+        "\"unique_id\":\"%s_%s\","
+        "\"availability_topic\":\"%s\","
+        "\"payload_available\":\"ONLINE\","
+        "\"payload_not_available\":\"OFFLINE\","
+        "\"device\":{\"identifiers\":[\"%s\"],\"name\":\"HDO monitor\","
+        "\"model\":\"ESP32-C3\",\"sw_version\":\"%s\"}}",
+        entityFields, mqttNodeId, objectId, MQTT_AVAILABILITY_TOPIC,
+        mqttNodeId, FIRMWARE_BUILD);
+
+    if (len < 0 || static_cast<size_t>(len) >= sizeof(payload)) {
+        LOG("MQTT: discovery payload for %s too long", objectId);
+        return;
+    }
+    if (!mqttClient.publish(topic, payload, true)) {
+        LOG("MQTT: discovery publish of %s failed", objectId);
+    }
+}
+
+void publishDiscovery()
+{
+    if (!HA_DISCOVERY || !mqttClient.connected()) return;
+
+    char fields[256];
+
+    snprintf(fields, sizeof(fields),
+             "\"name\":\"HDO\",\"state_topic\":\"%s\","
+             "\"payload_on\":\"ON\",\"payload_off\":\"OFF\","
+             "\"icon\":\"mdi:transmission-tower\"",
+             MQTT_HDO_TOPIC);
+    publishDiscoveryEntity("binary_sensor", "hdo", fields);
+
+    snprintf(fields, sizeof(fields),
+             "\"name\":\"Wi-Fi signal\",\"state_topic\":\"%s\","
+             "\"value_template\":\"{{ value_json.rssi }}\","
+             "\"unit_of_measurement\":\"dBm\","
+             "\"device_class\":\"signal_strength\","
+             "\"state_class\":\"measurement\","
+             "\"entity_category\":\"diagnostic\"",
+             MQTT_STATE_TOPIC);
+    publishDiscoveryEntity("sensor", "rssi", fields);
+
+    snprintf(fields, sizeof(fields),
+             "\"name\":\"Uptime\",\"state_topic\":\"%s\","
+             "\"value_template\":\"{{ value_json.uptime }}\","
+             "\"unit_of_measurement\":\"s\","
+             "\"device_class\":\"duration\","
+             "\"entity_category\":\"diagnostic\"",
+             MQTT_STATE_TOPIC);
+    publishDiscoveryEntity("sensor", "uptime", fields);
+
+    snprintf(fields, sizeof(fields),
+             "\"name\":\"Reset reason\",\"state_topic\":\"%s\","
+             "\"value_template\":\"{{ value_json.reset }}\","
+             "\"icon\":\"mdi:restart-alert\","
+             "\"entity_category\":\"diagnostic\"",
+             MQTT_STATE_TOPIC);
+    publishDiscoveryEntity("sensor", "reset", fields);
+
+    snprintf(fields, sizeof(fields),
+             "\"name\":\"IP address\",\"state_topic\":\"%s\","
+             "\"value_template\":\"{{ value_json.ip }}\","
+             "\"icon\":\"mdi:ip-network\","
+             "\"entity_category\":\"diagnostic\"",
+             MQTT_STATE_TOPIC);
+    publishDiscoveryEntity("sensor", "ip", fields);
+
+    LOG("MQTT: Home Assistant discovery published");
 }
 
 void publishAll()
@@ -267,6 +367,9 @@ void makeMqttClientId()
         static_cast<uint32_t>((mac >> 40) & 0xFF);
     snprintf(mqttClientId, sizeof(mqttClientId), "HDO-C3-%06X",
              static_cast<unsigned int>(unique));
+    // Node ID pro HA discovery topic smí obsahovat jen [a-zA-Z0-9_-].
+    snprintf(mqttNodeId, sizeof(mqttNodeId), "hdo_c3_%06x",
+             static_cast<unsigned int>(unique));
 }
 
 bool endsWith(const char* text, const char* suffix)
@@ -340,6 +443,7 @@ void connectMQTTIfNeeded()
         LOG("MQTT: connected as %s", mqttClientId);
         resetMqttBackoff();
         publishAvailability("ONLINE");
+        publishDiscovery();
         publishAll();
         lastReport = millis();
     } else {
@@ -463,8 +567,9 @@ void setup()
     makeMqttClientId();
 
     const esp_reset_reason_t resetReason = esp_reset_reason();
-    LOG("HDO monitor start, reset reason %d (%s), client ID %s",
-        static_cast<int>(resetReason), resetReasonText(resetReason),
+    resetReasonName = resetReasonText(resetReason);
+    LOG("HDO monitor start, build %s, reset reason %d (%s), client ID %s",
+        FIRMWARE_BUILD, static_cast<int>(resetReason), resetReasonName,
         mqttClientId);
     LOG("HDO: initial state %s", hdoState ? "ACTIVE" : "INACTIVE");
 
@@ -485,6 +590,10 @@ void setup()
     wifiClient.setTimeout(MQTT_CONNECT_TIMEOUT_S);
     mqttClient.setSocketTimeout(1);
     mqttClient.setKeepAlive(30);
+    if (!mqttClient.setBufferSize(MQTT_BUFFER_SIZE)) {
+        LOG("MQTT: cannot allocate %u B buffer",
+            static_cast<unsigned int>(MQTT_BUFFER_SIZE));
+    }
 
     startWiFi();
 
