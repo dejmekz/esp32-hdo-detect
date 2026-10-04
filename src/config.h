@@ -41,6 +41,10 @@ constexpr unsigned long WIFI_RETRY_INTERVAL_MS = 30000;
 constexpr unsigned long MQTT_RETRY_INTERVAL_MS = 5000;
 constexpr unsigned long MDNS_QUERY_TIMEOUT_MS = 2000;
 constexpr unsigned long OLED_REFRESH_INTERVAL_MS = 500;
+// Watchdog hlavní smyčky: když loop() nedoběhne do této doby,
+// zařízení se restartuje (důvod resetu "task watchdog"). Musí být
+// delší než nejdelší blokující volání (mDNS 2 s, MQTT connect).
+constexpr uint32_t WATCHDOG_TIMEOUT_S = 30;
 
 // ============================================================
 // Síť, OTA, logování

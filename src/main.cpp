@@ -7,6 +7,7 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 #include <esp_system.h>
+#include <esp_task_wdt.h>
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -145,6 +146,10 @@ void setupOTA()
     });
 
     ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+        // Celý upload běží uvnitř ArduinoOTA.handle(), loop() mezitím
+        // neproběhne - watchdog se proto resetuje po každém bloku dat.
+        esp_task_wdt_reset();
+
         const int percent = total > 0 ? progress * 100 / total : 0;
         if (percent == lastOtaPercent) return;
         lastOtaPercent = percent;
@@ -393,9 +398,20 @@ void setupSerial()
 #endif
 }
 
+void setupWatchdog()
+{
+    // Arduino už TWDT spouští (5 s, jen idle task); v IDF 4.4 volání
+    // esp_task_wdt_init() změní timeout existujícího watchdogu.
+    // panic = true => restart s důvodem "task watchdog".
+    esp_task_wdt_init(WATCHDOG_TIMEOUT_S, true);
+    esp_task_wdt_add(nullptr);  // hlídat i loopTask (aktuální task)
+    LOG("Watchdog: %lu s", static_cast<unsigned long>(WATCHDOG_TIMEOUT_S));
+}
+
 void setup()
 {
     setupSerial();
+    setupWatchdog();
 
     // Interní pull-up jako záloha k externímu rezistoru.
     pinMode(HDO_PIN, INPUT_PULLUP);
@@ -434,6 +450,8 @@ void setup()
 
 void loop()
 {
+    esp_task_wdt_reset();
+
     maintainWiFi();
 
     if (networkServicesStarted) {
