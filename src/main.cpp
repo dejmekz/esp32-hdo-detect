@@ -64,6 +64,12 @@ bool readHdo()
     return digitalRead(HDO_PIN) == HDO_ACTIVE_LEVEL;
 }
 
+// HDO aktivní = nízký tarif (NT), jinak vysoký tarif (VT).
+const char* tariffText()
+{
+    return hdoState ? "NT" : "VT";
+}
+
 void publishAvailability(const char* state)
 {
     if (mqttClient.connected()) {
@@ -475,7 +481,7 @@ void updateHdo()
     if (raw == hdoState || now - hdoRawChangeTime < HDO_DEBOUNCE_MS) return;
 
     hdoState = raw;
-    LOG("HDO: %s", hdoState ? "ACTIVE" : "INACTIVE");
+    LOG("HDO: tariff %s", tariffText());
     publishHdo();
     publishState();
 }
@@ -523,8 +529,8 @@ void refreshOLED()
     display.println(mqttClient.connected() ? "CONNECTED" : "OFFLINE");
 
     display.setCursor(x, OLED_BODY_Y + 2 * OLED_LINE_HEIGHT + y);
-    display.print("HDO:  ");
-    display.println(hdoState ? "ACTIVE" : "INACTIVE");
+    display.print("Tarif: ");
+    display.println(tariffText());
 
     display.setCursor(x, OLED_BODY_Y + 3 * OLED_LINE_HEIGHT + y);
     if (WiFi.status() == WL_CONNECTED) {
@@ -580,7 +586,7 @@ void setup()
     LOG("HDO monitor start, build %s, reset reason %d (%s), client ID %s",
         FIRMWARE_BUILD, static_cast<int>(resetReason), resetReasonName,
         mqttClientId);
-    LOG("HDO: initial state %s", hdoState ? "ACTIVE" : "INACTIVE");
+    LOG("HDO: initial tariff %s", tariffText());
 
     Wire.begin(OLED_SDA_PIN, OLED_SCL_PIN);
     oledReady = display.begin(SSD1306_SWITCHCAPVCC, OLED_I2C_ADDRESS);

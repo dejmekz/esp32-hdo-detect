@@ -64,7 +64,7 @@ restartem pošle do `hdo/availability` hodnotu `OFFLINE`, po startu (~5 s) zase 
 ## MQTT
 Zachována původní témata:
 - `hdo/availability`: `ONLINE` / LWT `OFFLINE`
-- `hdo/status`: `ON` / `OFF`
+- `hdo/status`: `ON` = nízký tarif (NT), `OFF` = vysoký tarif (VT); OLED a log ukazují přímo `NT` / `VT`
 - `hdo/state`: JSON se stavem a diagnostikou, například
   ```json
   {"hdo":true,"rssi":-62,"uptime":86400,"ip":"192.168.1.50","reset":"power on"}
