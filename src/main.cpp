@@ -492,14 +492,24 @@ void refreshOLED()
     if (now - lastOledRefresh < OLED_REFRESH_INTERVAL_MS) return;
     lastOledRefresh = now;
 
+    // Posun proti vypálení: cyklicky po OLED_SHIFT_INTERVAL_MS.
+    // Nejdelší řádek má 15 znaků = 90 px, posun X do 6 px se vejde.
+    static const int8_t shifts[][2] = {
+        {0, 0}, {2, 1}, {4, 2}, {6, 1}, {4, 0}, {2, -1}, {4, -2}, {6, -1},
+    };
+    const size_t shiftCount = sizeof(shifts) / sizeof(shifts[0]);
+    const size_t shift = (now / OLED_SHIFT_INTERVAL_MS) % shiftCount;
+    const int16_t x = shifts[shift][0];
+    const int16_t y = shifts[shift][1];
+
     display.clearDisplay();
     display.setTextColor(SSD1306_WHITE);
     display.setTextSize(1);
 
-    display.setCursor(0, OLED_HEADER_Y);
+    display.setCursor(x, OLED_HEADER_Y + y);
     display.println("HDO MONITOR");
 
-    display.setCursor(0, OLED_BODY_Y);
+    display.setCursor(x, OLED_BODY_Y + y);
     display.print("WiFi: ");
     if (WiFi.status() == WL_CONNECTED) {
         display.print(WiFi.RSSI());
@@ -508,16 +518,15 @@ void refreshOLED()
         display.println("OFFLINE");
     }
 
-    display.setCursor(0, OLED_BODY_Y + OLED_LINE_HEIGHT);
+    display.setCursor(x, OLED_BODY_Y + OLED_LINE_HEIGHT + y);
     display.print("MQTT: ");
     display.println(mqttClient.connected() ? "CONNECTED" : "OFFLINE");
 
-    display.setCursor(0, OLED_BODY_Y + 2 * OLED_LINE_HEIGHT);
+    display.setCursor(x, OLED_BODY_Y + 2 * OLED_LINE_HEIGHT + y);
     display.print("HDO:  ");
     display.println(hdoState ? "ACTIVE" : "INACTIVE");
 
-
-    display.setCursor(0, OLED_BODY_Y + 3 * OLED_LINE_HEIGHT);
+    display.setCursor(x, OLED_BODY_Y + 3 * OLED_LINE_HEIGHT + y);
     if (WiFi.status() == WL_CONNECTED) {
         display.print(WiFi.localIP());
     } else {
@@ -578,6 +587,8 @@ void setup()
     if (!oledReady) LOG("OLED: not found at 0x%02X", OLED_I2C_ADDRESS);
 
     if (oledReady) {
+        display.ssd1306_command(SSD1306_SETCONTRAST);
+        display.ssd1306_command(OLED_CONTRAST);
         display.clearDisplay();
         display.setTextColor(SSD1306_WHITE);
         display.setTextSize(1);

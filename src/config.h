@@ -25,6 +25,14 @@ constexpr int16_t OLED_HEADER_Y = 4;     // vystředěno ve žlutém pásu
 constexpr int16_t OLED_BODY_Y = 18;      // první řádek v modré části
 constexpr int16_t OLED_LINE_HEIGHT = 12; // 4 řádky: 18..61
 
+// Ochrana proti vypálení OLED (statický text 24/7):
+// - nižší jas: 0..255, knihovna standardně nastaví 0xCF,
+// - posun obsahu o pár pixelů každých OLED_SHIFT_INTERVAL_MS.
+//   Posun Y je max. ±2 px, aby hlavička zůstala ve žlutém pásu
+//   a poslední řádek na displeji.
+constexpr uint8_t OLED_CONTRAST = 0x20;
+constexpr unsigned long OLED_SHIFT_INTERVAL_MS = 5UL * 60 * 1000;
+
 // HDO active = LOW. Interní pull-up je zapnutý jako záloha,
 // doporučen je i externí pull-up na 3.3 V (např. 10 kΩ).
 constexpr uint8_t HDO_ACTIVE_LEVEL = LOW;

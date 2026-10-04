@@ -1,7 +1,9 @@
 # HDO monitor - ESP32-C3 + OLED
 
 ## Zapojení
-- HDO přes PC817C: GPIO1, aktivní LOW
+- HDO přes modul M447B (indikátor 230 V AC s optočlenem PC817): GPIO1, aktivní LOW
+  - HDO přijímač v elektroměru spíná nulový vodič; při nízkém tarifu je na modulu 230 V.
+  - Modul napětí usměrní a vyhladí, výstup PC817 je tedy trvalá úroveň (LOW = nízký tarif), ne pulzy 50 Hz.
 - OLED SSD1306 I2C: SDA GPIO8, SCL GPIO10
 - OLED adresa: 0x3C (pokud displej používá 0x3D, změň `OLED_I2C_ADDRESS` v `src/config.h`)
 
@@ -127,6 +129,7 @@ odstraň - jinak bude v HA dvakrát. Odebrání zařízení z HA po vypnutí dis
 - Wi-Fi se zkouší připojit opakovaně, bez nekonečné blokující smyčky.
 - HDO se čte pollingem v každém průchodu smyčky s neblokujícím debounce (50 ms).
 - OLED se obnovuje každých 500 ms; chybová hláška OTA na něm zůstane 10 s (`OLED_MESSAGE_HOLD_MS`).
+- Ochrana OLED proti vypálení: snížený jas (`OLED_CONTRAST`) a posun obsahu o pár pixelů každých 5 min (`OLED_SHIFT_INTERVAL_MS`).
 - Watchdog: když se hlavní smyčka zasekne na déle než 30 s (`WATCHDOG_TIMEOUT_S`), zařízení se restartuje; v logu je pak důvod resetu `task watchdog`.
 - Přihlašovací údaje Wi-Fi/MQTT jsou v `src/secrets.h`, který se necommituje.
 - MQTT host končící na `.local` se překládá přes mDNS; pevná IP adresa je spolehlivější.
