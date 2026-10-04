@@ -38,9 +38,20 @@ constexpr unsigned long REPORT_INTERVAL_MS = 60000;
 // Jak dlouho nechat běžet automatický reconnect, než se Wi-Fi
 // restartuje ručně (disconnect + begin).
 constexpr unsigned long WIFI_RETRY_INTERVAL_MS = 30000;
-constexpr unsigned long MQTT_RETRY_INTERVAL_MS = 5000;
+// MQTT reconnect s exponenciálním odstupem: 5 s, 10 s, 20 s ... max 60 s.
+// Neúspěšný pokus blokuje smyčku (mDNS + TCP connect), proto se při
+// nedostupném brokeru nesmí opakovat příliš často.
+constexpr unsigned long MQTT_RETRY_MIN_MS = 5000;
+constexpr unsigned long MQTT_RETRY_MAX_MS = 60000;
+// Timeout TCP spojení s brokerem (výchozí ve WiFiClient jsou 3 s).
+// Platí i pro zápis do socketu.
+constexpr uint32_t MQTT_CONNECT_TIMEOUT_S = 2;
+// Po kolika neúspěšných pokusech v řadě znovu přeložit .local adresu.
+constexpr uint8_t MQTT_RESOLVE_AFTER_FAILURES = 3;
 constexpr unsigned long MDNS_QUERY_TIMEOUT_MS = 2000;
 constexpr unsigned long OLED_REFRESH_INTERVAL_MS = 500;
+// Jak dlouho nechat na OLED chybovou hlášku (OTA ERROR).
+constexpr unsigned long OLED_MESSAGE_HOLD_MS = 10000;
 // Watchdog hlavní smyčky: když loop() nedoběhne do této doby,
 // zařízení se restartuje (důvod resetu "task watchdog"). Musí být
 // delší než nejdelší blokující volání (mDNS 2 s, MQTT connect).

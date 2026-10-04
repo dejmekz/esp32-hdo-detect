@@ -36,7 +36,10 @@ bool mqttWasConnected = false;
 // ArduinoOTA.begin() spouští i mDNS; MDNS.begin() nelze volat dvakrát.
 bool networkServicesStarted = false;
 bool mqttServerResolved = false;
+// Hláška na OLED (např. OTA ERROR), kterou refreshOLED() zatím nepřepíše.
+bool oledMessageHeld = false;
 int lastOtaPercent = -1;
+uint8_t mqttFailures = 0;
 wifi_power_t normalTxPower = WIFI_POWER_19_5dBm;
 
 char mqttClientId[24];
@@ -45,7 +48,9 @@ unsigned long hdoRawChangeTime = 0;
 unsigned long lastReport = 0;
 unsigned long wifiDisconnectedSince = 0;
 unsigned long lastMqttAttempt = 0;
+unsigned long mqttRetryDelay = MQTT_RETRY_MIN_MS;
 unsigned long lastOledRefresh = 0;
+unsigned long oledMessageSince = 0;
 
 bool readHdo()
 {
@@ -96,6 +101,15 @@ void showOledMessage(const char* line1, const char* line2)
     display.setCursor(0, OLED_BODY_Y);
     display.print(line2);
     display.display();
+}
+
+// Jako showOledMessage(), ale hláška vydrží OLED_MESSAGE_HOLD_MS,
+// než ji refreshOLED() přepíše stavovou obrazovkou.
+void showHeldOledMessage(const char* line1, const char* line2)
+{
+    showOledMessage(line1, line2);
+    oledMessageHeld = true;
+    oledMessageSince = millis();
 }
 
 const char* otaErrorText(ota_error_t error)
@@ -169,13 +183,26 @@ void setupOTA()
     ArduinoOTA.onError([](ota_error_t error) {
         LOG("OTA: error %u (%s)", error, otaErrorText(error));
         WiFi.setTxPower(normalTxPower);
-        showOledMessage("OTA ERROR", otaErrorText(error));
+        showHeldOledMessage("OTA ERROR", otaErrorText(error));
     });
 
     ArduinoOTA.begin();
     networkServicesStarted = true;
     LOG("OTA: ready at %s.local%s", DEVICE_HOSTNAME,
         strlen(OTA_PASSWORD) > 0 ? "" : " (NO PASSWORD)");
+}
+
+void resetMqttBackoff()
+{
+    mqttFailures = 0;
+    mqttRetryDelay = MQTT_RETRY_MIN_MS;
+}
+
+void mqttAttemptFailed()
+{
+    if (mqttFailures < UINT8_MAX) mqttFailures++;
+    mqttRetryDelay = min(mqttRetryDelay * 2, MQTT_RETRY_MAX_MS);
+    LOG("MQTT: next attempt in %lu s", mqttRetryDelay / 1000);
 }
 
 void startWiFi()
@@ -200,6 +227,9 @@ void maintainWiFi()
             LOG("WiFi: connected, IP %s, RSSI %d dBm",
                 WiFi.localIP().toString().c_str(), WiFi.RSSI());
             if (!networkServicesStarted) setupOTA();
+            // Odstup z doby bez Wi-Fi neplatí, MQTT zkusit hned.
+            resetMqttBackoff();
+            lastMqttAttempt = millis() - MQTT_RETRY_MIN_MS;
         }
         wifiDisconnectedSince = 0;
         return;
@@ -282,10 +312,13 @@ void connectMQTTIfNeeded()
     if (WiFi.status() != WL_CONNECTED || mqttClient.connected()) return;
 
     const unsigned long now = millis();
-    if (now - lastMqttAttempt < MQTT_RETRY_INTERVAL_MS) return;
+    if (now - lastMqttAttempt < mqttRetryDelay) return;
     lastMqttAttempt = now;
 
-    if (!resolveMqttServer()) return;
+    if (!resolveMqttServer()) {
+        mqttAttemptFailed();
+        return;
+    }
 
     bool connected = false;
 
@@ -305,14 +338,19 @@ void connectMQTTIfNeeded()
 
     if (connected) {
         LOG("MQTT: connected as %s", mqttClientId);
+        resetMqttBackoff();
         publishAvailability("ONLINE");
         publishAll();
         lastReport = millis();
     } else {
         // Kódy viz PubSubClient.h (-2 = síť nedostupná, 4/5 = přihlášení).
         LOG("MQTT: connect failed, state %d", mqttClient.state());
-        // IP brokera se mohla změnit - příště přeložit znovu.
-        mqttServerResolved = false;
+        mqttAttemptFailed();
+        // IP brokera se mohla změnit - po několika neúspěších přeložit
+        // znovu. Ne po každém: mDNS dotaz blokuje smyčku až 2 s.
+        if (mqttFailures % MQTT_RESOLVE_AFTER_FAILURES == 0) {
+            mqttServerResolved = false;
+        }
     }
 }
 
@@ -343,6 +381,10 @@ void refreshOLED()
     if (!oledReady) return;
 
     const unsigned long now = millis();
+    if (oledMessageHeld) {
+        if (now - oledMessageSince < OLED_MESSAGE_HOLD_MS) return;
+        oledMessageHeld = false;
+    }
     if (now - lastOledRefresh < OLED_REFRESH_INTERVAL_MS) return;
     lastOledRefresh = now;
 
@@ -440,6 +482,7 @@ void setup()
         display.display();
     }
 
+    wifiClient.setTimeout(MQTT_CONNECT_TIMEOUT_S);
     mqttClient.setSocketTimeout(1);
     mqttClient.setKeepAlive(30);
 
