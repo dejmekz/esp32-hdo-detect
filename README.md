@@ -4,9 +4,9 @@
 - HDO přes modul M447B (indikátor 230 V AC s optočlenem PC817): GPIO1, aktivní LOW
   - HDO přijímač v elektroměru spíná nulový vodič; při nízkém tarifu je na modulu 230 V.
   - Modul napětí usměrní a vyhladí, výstup PC817 je tedy trvalá úroveň (LOW = nízký tarif), ne pulzy 50 Hz.
-- RGB LED se společnou anodou (anoda na 3,3 V): červená GPIO3, zelená GPIO4, modrá nezapojená
-  - každá barva přes vlastní předřadný rezistor; jas se dolaďuje PWM (`LED_RED_BRIGHTNESS`, `LED_GREEN_BRIGHTNESS`)
-  - LED se společnou katodou: nastav `LED_COMMON_ANODE = false` v `src/config.h`
+- RGB LED se společnou katodou (katoda na GND): modrá GPIO3, červená GPIO4, zelená GPIO5
+  - každá barva přes vlastní předřadný rezistor; jas se dolaďuje PWM (`LED_RED_BRIGHTNESS`, `LED_GREEN_BRIGHTNESS`, `LED_BLUE_BRIGHTNESS`)
+  - LED se společnou anodou (na 3,3 V): nastav `LED_COMMON_ANODE = true` v `src/config.h`
 - OLED SSD1306 I2C (volitelný, ve výchozím buildu vypnutý): SDA GPIO8, SCL GPIO10, adresa 0x3C
   - zapíná se v `platformio.ini` flagem `-DHDO_OLED=1`; při adrese 0x3D změň `OLED_I2C_ADDRESS`
 
@@ -17,9 +17,9 @@
 | červená trvale | vysoký tarif (VT), Wi-Fi i MQTT připojené |
 | barva tarifu bliká pomalu | Wi-Fi OK, MQTT nepřipojené |
 | barva tarifu bliká rychle | bez Wi-Fi |
-| žlutá trvale | start zařízení (krátce), konec OTA |
-| žlutá problikává | probíhá OTA |
-| žlutá rychle bliká 10 s | chyba OTA |
+| modrá trvale | start zařízení (krátce), konec OTA |
+| modrá problikává | probíhá OTA |
+| fialová rychle bliká 10 s | chyba OTA |
 
 U HDO vstupu použij externí pull-up na 3,3 V (např. 10 kΩ), pokud jej již nezajišťuje tvoje zapojení PC817C.
 
@@ -48,7 +48,7 @@ může zůstat namontované v rozvaděči.
   Pro build a upload přes USB přepni zpět na `env:esp32-c3-devkitm-1`.
 
 Zařízení se hlásí jako `hdo-monitor.local` (`DEVICE_HOSTNAME` v `config.h`).
-Průběh je vidět na LED (žlutě problikává; s OLED `OTA UPDATE` + procenta) a v sériovém logu. Před
+Průběh je vidět na LED (modře problikává; s OLED `OTA UPDATE` + procenta) a v sériovém logu. Před
 restartem pošle do `hdo/availability` hodnotu `OFFLINE`, po startu (~5 s) zase `ONLINE`.
 
 ### Jak to funguje
@@ -181,7 +181,7 @@ odstraň - jinak bude v HA dvakrát. Odebrání zařízení z HA po vypnutí dis
 - Wi-Fi se zkouší připojit opakovaně, bez nekonečné blokující smyčky.
 - HDO se čte pollingem v každém průchodu smyčky s neblokujícím debounce (50 ms).
 - LED se obnovuje v každém průchodu smyčky; při blokujícím pokusu o MQTT/mDNS (až 2 s) se blikání krátce zastaví.
-- OLED (je-li zapnutý) se obnovuje každých 500 ms; chybová hláška OTA na něm (i žluté blikání LED) zůstane 10 s (`OLED_MESSAGE_HOLD_MS`).
+- OLED (je-li zapnutý) se obnovuje každých 500 ms; chybová hláška OTA na něm (i fialové blikání LED) zůstane 10 s (`OLED_MESSAGE_HOLD_MS`).
 - Ochrana OLED proti vypálení: snížený jas (`OLED_CONTRAST`) a posun obsahu o pár pixelů každých 5 min (`OLED_SHIFT_INTERVAL_MS`).
 - Watchdog: když se hlavní smyčka zasekne na déle než 30 s (`WATCHDOG_TIMEOUT_S`), zařízení se restartuje; v logu je pak důvod resetu `task watchdog`.
 - Přihlašovací údaje Wi-Fi/MQTT jsou v `src/secrets.h`, který se necommituje.

@@ -44,7 +44,7 @@ bool networkServicesStarted = false;
 bool mqttServerResolved = false;
 // Hláška na OLED (např. OTA ERROR), kterou refreshOLED() zatím nepřepíše.
 bool oledMessageHeld = false;
-// LED bliká žlutě po chybě OTA, dokud neuplyne OLED_MESSAGE_HOLD_MS.
+// LED bliká fialově po chybě OTA, dokud neuplyne OLED_MESSAGE_HOLD_MS.
 bool ledOtaErrorHeld = false;
 int lastOtaPercent = -1;
 uint8_t mqttFailures = 0;
@@ -67,7 +67,7 @@ unsigned long lastOledRefresh = 0;
 unsigned long oledMessageSince = 0;
 unsigned long ledOtaErrorSince = 0;
 
-enum class LedColor : uint8_t { Off, Red, Green, Yellow };
+enum class LedColor : uint8_t { Off, Red, Green, Blue, Magenta };
 LedColor ledColor = LedColor::Off;
 bool ledColorSet = false;
 
@@ -235,7 +235,7 @@ void showHeldOledMessage(const char* line1, const char* line2)
 void writeLedChannel(uint8_t channel, uint8_t brightness)
 {
     // Společná anoda: svítí při LOW => obrácená střída.
-    // ledcWrite(255) při 8 bitech dává trvale HIGH = zhasnuto.
+    // ledcWrite(255) při 8 bitech dává trvale HIGH.
     ledcWrite(channel, LED_COMMON_ANODE ? 255 - brightness : brightness);
 }
 
@@ -245,20 +245,24 @@ void setLed(LedColor color)
     ledColor = color;
     ledColorSet = true;
 
-    const bool red = color == LedColor::Red || color == LedColor::Yellow;
-    const bool green = color == LedColor::Green || color == LedColor::Yellow;
+    const bool red = color == LedColor::Red || color == LedColor::Magenta;
+    const bool green = color == LedColor::Green;
+    const bool blue = color == LedColor::Blue || color == LedColor::Magenta;
     writeLedChannel(LED_RED_CHANNEL, red ? LED_RED_BRIGHTNESS : 0);
     writeLedChannel(LED_GREEN_CHANNEL, green ? LED_GREEN_BRIGHTNESS : 0);
+    writeLedChannel(LED_BLUE_CHANNEL, blue ? LED_BLUE_BRIGHTNESS : 0);
 }
 
 void setupLed()
 {
     ledcSetup(LED_RED_CHANNEL, LED_PWM_FREQ_HZ, LED_PWM_RESOLUTION);
     ledcSetup(LED_GREEN_CHANNEL, LED_PWM_FREQ_HZ, LED_PWM_RESOLUTION);
+    ledcSetup(LED_BLUE_CHANNEL, LED_PWM_FREQ_HZ, LED_PWM_RESOLUTION);
     ledcAttachPin(LED_RED_PIN, LED_RED_CHANNEL);
     ledcAttachPin(LED_GREEN_PIN, LED_GREEN_CHANNEL);
-    // Žlutá do připojení k Wi-Fi = zařízení startuje.
-    setLed(LedColor::Yellow);
+    ledcAttachPin(LED_BLUE_PIN, LED_BLUE_CHANNEL);
+    // Modrá = zařízení startuje (do prvního průchodu smyčkou).
+    setLed(LedColor::Blue);
 }
 
 const char* otaErrorText(ota_error_t error)
@@ -306,7 +310,7 @@ void setupOTA()
         publishAvailability("OFFLINE");
         mqttClient.disconnect();
         showOledMessage("OTA UPDATE", "Starting...");
-        setLed(LedColor::Yellow);
+        setLed(LedColor::Blue);
     });
 
     ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
@@ -319,8 +323,8 @@ void setupOTA()
         lastOtaPercent = percent;
 
         if (percent % 10 == 0) LOG("OTA: %d %%", percent);
-        // loop() neběží, LED se přepíná přímo zde: žlutě problikává.
-        setLed(percent % 2 == 0 ? LedColor::Yellow : LedColor::Off);
+        // loop() neběží, LED se přepíná přímo zde: modře problikává.
+        setLed(percent % 2 == 0 ? LedColor::Blue : LedColor::Off);
 
         char line[24];
         snprintf(line, sizeof(line), "Progress: %d %%", percent);
@@ -330,7 +334,7 @@ void setupOTA()
     ArduinoOTA.onEnd([]() {
         LOG("OTA: done, restarting");
         showOledMessage("OTA UPDATE", "Done, restarting...");
-        setLed(LedColor::Yellow);
+        setLed(LedColor::Blue);
     });
 
     ArduinoOTA.onError([](ota_error_t error) {
@@ -537,7 +541,7 @@ void updateHdo()
 
 // NT = zelená, VT = červená. Svítí trvale, když je Wi-Fi i MQTT
 // připojené; jinak bliká (rychle bez Wi-Fi, pomalu bez MQTT).
-// Po chybě OTA rychle bliká žlutě.
+// Po chybě OTA rychle bliká fialově.
 void refreshLed()
 {
     const unsigned long now = millis();
@@ -545,7 +549,7 @@ void refreshLed()
     if (ledOtaErrorHeld) {
         if (now - ledOtaErrorSince < OLED_MESSAGE_HOLD_MS) {
             const bool on = (now / LED_BLINK_FAST_MS) % 2 == 0;
-            setLed(on ? LedColor::Yellow : LedColor::Off);
+            setLed(on ? LedColor::Magenta : LedColor::Off);
             return;
         }
         ledOtaErrorHeld = false;

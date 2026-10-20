@@ -15,17 +15,20 @@
 
 constexpr uint8_t HDO_PIN = 1;          // HDO přes PC817C
 
-// RGB LED se společnou anodou (na 3.3 V): LOW = svítí.
-// Zapojená jen červená a zelená, žlutá = obě současně.
-constexpr uint8_t LED_RED_PIN = 3;
-constexpr uint8_t LED_GREEN_PIN = 4;
-constexpr bool LED_COMMON_ANODE = true;
-// Jas přes PWM 0..255, zvlášť pro každou barvu (zelená bývá
-// při stejném proudu výrazně jasnější).
+// RGB LED se společnou katodou (na GND): HIGH = svítí.
+// Pro LED se společnou anodou (na 3.3 V) nastav LED_COMMON_ANODE = true.
+constexpr uint8_t LED_BLUE_PIN = 3;
+constexpr uint8_t LED_RED_PIN = 4;
+constexpr uint8_t LED_GREEN_PIN = 5;
+constexpr bool LED_COMMON_ANODE = false;
+// Jas přes PWM 0..255, zvlášť pro každou barvu (zelená a modrá
+// bývají při stejném proudu výrazně jasnější než červená).
 constexpr uint8_t LED_RED_BRIGHTNESS = 40;
 constexpr uint8_t LED_GREEN_BRIGHTNESS = 40;
+constexpr uint8_t LED_BLUE_BRIGHTNESS = 40;
 constexpr uint8_t LED_RED_CHANNEL = 0;   // LEDC kanál
 constexpr uint8_t LED_GREEN_CHANNEL = 1;
+constexpr uint8_t LED_BLUE_CHANNEL = 2;
 constexpr uint32_t LED_PWM_FREQ_HZ = 5000;
 constexpr uint8_t LED_PWM_RESOLUTION = 8;
 
