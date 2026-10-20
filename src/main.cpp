@@ -2,10 +2,7 @@
 #include <WiFi.h>
 #include <ESPmDNS.h>
 #include <ArduinoOTA.h>
-#include <Wire.h>
 #include <PubSubClient.h>
-#include <Adafruit_GFX.h>
-#include <Adafruit_SSD1306.h>
 #include <esp_system.h>
 #include <esp_timer.h>
 #include <esp_task_wdt.h>
@@ -14,6 +11,12 @@
 #include <string.h>
 
 #include "config.h"
+
+#if HDO_OLED
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+#endif
 
 // Log s časem od startu v ms, např. "[   12345] WiFi: connected".
 #define LOG(fmt, ...)                                                   \
@@ -25,10 +28,12 @@
 
 WiFiClient wifiClient;
 PubSubClient mqttClient(wifiClient);
+#if HDO_OLED
 Adafruit_SSD1306 display(128, 64, &Wire, OLED_RESET_PIN);
+#endif
 
 // hdoState = odfiltrovaný (debounced) stav; jediný zdroj pravdy
-// pro MQTT i OLED.
+// pro MQTT, OLED i LED.
 bool hdoState = false;
 bool hdoRawState = false;
 bool oledReady = false;
@@ -39,6 +44,8 @@ bool networkServicesStarted = false;
 bool mqttServerResolved = false;
 // Hláška na OLED (např. OTA ERROR), kterou refreshOLED() zatím nepřepíše.
 bool oledMessageHeld = false;
+// LED bliká žlutě po chybě OTA, dokud neuplyne OLED_MESSAGE_HOLD_MS.
+bool ledOtaErrorHeld = false;
 int lastOtaPercent = -1;
 uint8_t mqttFailures = 0;
 wifi_power_t normalTxPower = WIFI_POWER_19_5dBm;
@@ -58,6 +65,11 @@ unsigned long lastMqttAttempt = 0;
 unsigned long mqttRetryDelay = MQTT_RETRY_MIN_MS;
 unsigned long lastOledRefresh = 0;
 unsigned long oledMessageSince = 0;
+unsigned long ledOtaErrorSince = 0;
+
+enum class LedColor : uint8_t { Off, Red, Green, Yellow };
+LedColor ledColor = LedColor::Off;
+bool ledColorSet = false;
 
 bool readHdo()
 {
@@ -197,6 +209,7 @@ void publishAll()
 
 void showOledMessage(const char* line1, const char* line2)
 {
+#if HDO_OLED
     if (!oledReady) return;
 
     display.clearDisplay();
@@ -207,6 +220,7 @@ void showOledMessage(const char* line1, const char* line2)
     display.setCursor(0, OLED_BODY_Y);
     display.print(line2);
     display.display();
+#endif
 }
 
 // Jako showOledMessage(), ale hláška vydrží OLED_MESSAGE_HOLD_MS,
@@ -216,6 +230,35 @@ void showHeldOledMessage(const char* line1, const char* line2)
     showOledMessage(line1, line2);
     oledMessageHeld = true;
     oledMessageSince = millis();
+}
+
+void writeLedChannel(uint8_t channel, uint8_t brightness)
+{
+    // Společná anoda: svítí při LOW => obrácená střída.
+    // ledcWrite(255) při 8 bitech dává trvale HIGH = zhasnuto.
+    ledcWrite(channel, LED_COMMON_ANODE ? 255 - brightness : brightness);
+}
+
+void setLed(LedColor color)
+{
+    if (ledColorSet && color == ledColor) return;
+    ledColor = color;
+    ledColorSet = true;
+
+    const bool red = color == LedColor::Red || color == LedColor::Yellow;
+    const bool green = color == LedColor::Green || color == LedColor::Yellow;
+    writeLedChannel(LED_RED_CHANNEL, red ? LED_RED_BRIGHTNESS : 0);
+    writeLedChannel(LED_GREEN_CHANNEL, green ? LED_GREEN_BRIGHTNESS : 0);
+}
+
+void setupLed()
+{
+    ledcSetup(LED_RED_CHANNEL, LED_PWM_FREQ_HZ, LED_PWM_RESOLUTION);
+    ledcSetup(LED_GREEN_CHANNEL, LED_PWM_FREQ_HZ, LED_PWM_RESOLUTION);
+    ledcAttachPin(LED_RED_PIN, LED_RED_CHANNEL);
+    ledcAttachPin(LED_GREEN_PIN, LED_GREEN_CHANNEL);
+    // Žlutá do připojení k Wi-Fi = zařízení startuje.
+    setLed(LedColor::Yellow);
 }
 
 const char* otaErrorText(ota_error_t error)
@@ -263,6 +306,7 @@ void setupOTA()
         publishAvailability("OFFLINE");
         mqttClient.disconnect();
         showOledMessage("OTA UPDATE", "Starting...");
+        setLed(LedColor::Yellow);
     });
 
     ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
@@ -275,6 +319,8 @@ void setupOTA()
         lastOtaPercent = percent;
 
         if (percent % 10 == 0) LOG("OTA: %d %%", percent);
+        // loop() neběží, LED se přepíná přímo zde: žlutě problikává.
+        setLed(percent % 2 == 0 ? LedColor::Yellow : LedColor::Off);
 
         char line[24];
         snprintf(line, sizeof(line), "Progress: %d %%", percent);
@@ -284,12 +330,15 @@ void setupOTA()
     ArduinoOTA.onEnd([]() {
         LOG("OTA: done, restarting");
         showOledMessage("OTA UPDATE", "Done, restarting...");
+        setLed(LedColor::Yellow);
     });
 
     ArduinoOTA.onError([](ota_error_t error) {
         LOG("OTA: error %u (%s)", error, otaErrorText(error));
         WiFi.setTxPower(normalTxPower);
         showHeldOledMessage("OTA ERROR", otaErrorText(error));
+        ledOtaErrorHeld = true;
+        ledOtaErrorSince = millis();
     });
 
     ArduinoOTA.begin();
@@ -486,8 +535,37 @@ void updateHdo()
     publishState();
 }
 
+// NT = zelená, VT = červená. Svítí trvale, když je Wi-Fi i MQTT
+// připojené; jinak bliká (rychle bez Wi-Fi, pomalu bez MQTT).
+// Po chybě OTA rychle bliká žlutě.
+void refreshLed()
+{
+    const unsigned long now = millis();
+
+    if (ledOtaErrorHeld) {
+        if (now - ledOtaErrorSince < OLED_MESSAGE_HOLD_MS) {
+            const bool on = (now / LED_BLINK_FAST_MS) % 2 == 0;
+            setLed(on ? LedColor::Yellow : LedColor::Off);
+            return;
+        }
+        ledOtaErrorHeld = false;
+    }
+
+    unsigned long blinkMs = 0;
+    if (WiFi.status() != WL_CONNECTED) {
+        blinkMs = LED_BLINK_FAST_MS;
+    } else if (!mqttClient.connected()) {
+        blinkMs = LED_BLINK_SLOW_MS;
+    }
+
+    const LedColor tariff = hdoState ? LedColor::Green : LedColor::Red;
+    const bool on = blinkMs == 0 || (now / blinkMs) % 2 == 0;
+    setLed(on ? tariff : LedColor::Off);
+}
+
 void refreshOLED()
 {
+#if HDO_OLED
     if (!oledReady) return;
 
     const unsigned long now = millis();
@@ -540,6 +618,28 @@ void refreshOLED()
     }
 
     display.display();
+#endif
+}
+
+void setupOLED()
+{
+#if HDO_OLED
+    Wire.begin(OLED_SDA_PIN, OLED_SCL_PIN);
+    oledReady = display.begin(SSD1306_SWITCHCAPVCC, OLED_I2C_ADDRESS);
+    if (!oledReady) LOG("OLED: not found at 0x%02X", OLED_I2C_ADDRESS);
+
+    if (oledReady) {
+        display.ssd1306_command(SSD1306_SETCONTRAST);
+        display.ssd1306_command(OLED_CONTRAST);
+        display.clearDisplay();
+        display.setTextColor(SSD1306_WHITE);
+        display.setTextSize(1);
+        display.setCursor(0, 0);
+        display.println("HDO MONITOR");
+        display.println("Starting...");
+        display.display();
+    }
+#endif
 }
 
 void setupSerial()
@@ -571,6 +671,7 @@ void setupWatchdog()
 
 void setup()
 {
+    setupLed();
     setupSerial();
     setupWatchdog();
 
@@ -588,21 +689,7 @@ void setup()
         mqttClientId);
     LOG("HDO: initial tariff %s", tariffText());
 
-    Wire.begin(OLED_SDA_PIN, OLED_SCL_PIN);
-    oledReady = display.begin(SSD1306_SWITCHCAPVCC, OLED_I2C_ADDRESS);
-    if (!oledReady) LOG("OLED: not found at 0x%02X", OLED_I2C_ADDRESS);
-
-    if (oledReady) {
-        display.ssd1306_command(SSD1306_SETCONTRAST);
-        display.ssd1306_command(OLED_CONTRAST);
-        display.clearDisplay();
-        display.setTextColor(SSD1306_WHITE);
-        display.setTextSize(1);
-        display.setCursor(0, 0);
-        display.println("HDO MONITOR");
-        display.println("Starting...");
-        display.display();
-    }
+    setupOLED();
 
     wifiClient.setTimeout(MQTT_CONNECT_TIMEOUT_S);
     mqttClient.setSocketTimeout(1);
@@ -647,6 +734,7 @@ void loop()
         publishAll();
     }
 
+    refreshLed();
     refreshOLED();
     delay(1);
 }

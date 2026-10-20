@@ -14,6 +14,26 @@
 // ============================================================
 
 constexpr uint8_t HDO_PIN = 1;          // HDO přes PC817C
+
+// RGB LED se společnou anodou (na 3.3 V): LOW = svítí.
+// Zapojená jen červená a zelená, žlutá = obě současně.
+constexpr uint8_t LED_RED_PIN = 3;
+constexpr uint8_t LED_GREEN_PIN = 4;
+constexpr bool LED_COMMON_ANODE = true;
+// Jas přes PWM 0..255, zvlášť pro každou barvu (zelená bývá
+// při stejném proudu výrazně jasnější).
+constexpr uint8_t LED_RED_BRIGHTNESS = 40;
+constexpr uint8_t LED_GREEN_BRIGHTNESS = 40;
+constexpr uint8_t LED_RED_CHANNEL = 0;   // LEDC kanál
+constexpr uint8_t LED_GREEN_CHANNEL = 1;
+constexpr uint32_t LED_PWM_FREQ_HZ = 5000;
+constexpr uint8_t LED_PWM_RESOLUTION = 8;
+
+// OLED displej - volitelný, zapíná se build flagem HDO_OLED=1
+// v platformio.ini.
+#ifndef HDO_OLED
+#define HDO_OLED 0
+#endif
 constexpr uint8_t OLED_SDA_PIN = 8;     // OLED I2C SDA
 constexpr uint8_t OLED_SCL_PIN = 10;    // OLED I2C SCL
 constexpr uint8_t OLED_I2C_ADDRESS = 0x3C;
@@ -58,8 +78,12 @@ constexpr uint32_t MQTT_CONNECT_TIMEOUT_S = 2;
 constexpr uint8_t MQTT_RESOLVE_AFTER_FAILURES = 3;
 constexpr unsigned long MDNS_QUERY_TIMEOUT_MS = 2000;
 constexpr unsigned long OLED_REFRESH_INTERVAL_MS = 500;
-// Jak dlouho nechat na OLED chybovou hlášku (OTA ERROR).
+// Jak dlouho nechat na OLED / LED chybovou hlášku (OTA ERROR).
 constexpr unsigned long OLED_MESSAGE_HOLD_MS = 10000;
+// Blikání LED: rychle = bez Wi-Fi, pomalu = Wi-Fi OK, ale bez MQTT.
+// Hodnota = délka jedné fáze (svítí / nesvítí).
+constexpr unsigned long LED_BLINK_FAST_MS = 150;
+constexpr unsigned long LED_BLINK_SLOW_MS = 600;
 // Watchdog hlavní smyčky: když loop() nedoběhne do této doby,
 // zařízení se restartuje (důvod resetu "task watchdog"). Musí být
 // delší než nejdelší blokující volání (mDNS 2 s, MQTT connect).
