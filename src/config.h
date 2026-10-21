@@ -37,7 +37,8 @@ constexpr uint8_t I2C_SDA_PIN = 8;
 constexpr uint8_t I2C_SCL_PIN = 10;
 
 // Senzor teploty a vlhkosti Grove DHT20 (AHT20) - volitelný,
-// při startu se detekuje; když chybí, hodnoty se nepublikují.
+// detekuje se při startu a pak každých SENSOR_PROBE_INTERVAL_MS;
+// bez aktuálního měření se publikuje null.
 constexpr uint8_t DHT20_I2C_ADDRESS = 0x38;
 
 // OLED displej - volitelný, zapíná se build flagem HDO_OLED=1
@@ -78,6 +79,11 @@ constexpr unsigned long SENSOR_READ_INTERVAL_MS = 10000;
 constexpr unsigned long DHT20_MEASURE_MS = 80;
 constexpr unsigned long DHT20_MEASURE_TIMEOUT_MS = 500;
 constexpr unsigned long DHT20_POWERUP_MS = 100;
+// Chybějící senzor se hledá znovu s tímto intervalem (připojení za
+// běhu). Po SENSOR_MAX_FAILURES chybách měření v řadě se senzor
+// považuje za odpojený.
+constexpr unsigned long SENSOR_PROBE_INTERVAL_MS = 60000;
+constexpr uint8_t SENSOR_MAX_FAILURES = 3;
 // Starší hodnota se nepublikuje (senzor přestal odpovídat).
 constexpr unsigned long SENSOR_STALE_MS = 3 * SENSOR_READ_INTERVAL_MS;
 // Jak dlouho nechat běžet automatický reconnect, než se Wi-Fi

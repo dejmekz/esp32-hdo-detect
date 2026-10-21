@@ -55,8 +55,12 @@ char mqttNodeId[24];
 // Nastaví setup(); publikuje se v hdo/state.
 const char* resetReasonName = "unknown";
 
-// Čas sestavení - v HA (sw_version) a v logu je vidět, zda OTA prošla.
-constexpr char FIRMWARE_BUILD[] = __DATE__ " " __TIME__;
+// Verze z git describe (scripts/version.py) - v hdo/state, v HA
+// (sw_version, i s časem sestavení) a v logu je vidět, zda OTA prošla.
+#ifndef FW_VERSION
+#define FW_VERSION "unknown"
+#endif
+constexpr char FIRMWARE_BUILD[] = FW_VERSION " " __DATE__ " " __TIME__;
 
 unsigned long hdoRawChangeTime = 0;
 unsigned long lastReport = 0;
@@ -72,10 +76,14 @@ unsigned long ledOtaErrorSince = 0;
 bool sensorReady = false;
 bool sensorMeasuring = false;
 bool sensorHasValue = false;
+// "not found" se loguje jen jednou, ne při každém dalším hledání.
+bool sensorMissingLogged = false;
+uint8_t sensorFailures = 0;
 float sensorTemperature = NAN;
 float sensorHumidity = NAN;
 unsigned long sensorMeasureStart = 0;
 unsigned long sensorLastValue = 0;
+unsigned long sensorLastProbe = 0;
 
 enum class LedColor : uint8_t { Off, Red, Green, Blue, Magenta };
 LedColor ledColor = LedColor::Off;
@@ -114,7 +122,8 @@ bool sensorValueFresh()
 }
 
 // Stav + diagnostika. Klíč "hdo" zůstává kvůli kompatibilitě.
-// Teplota a vlhkost jen tehdy, když je k dispozici aktuální měření.
+// Teplota a vlhkost bez aktuálního měření = null (klíč zůstává, aby
+// JSONPath v openHAB nehlásil chybějící cestu).
 void publishState()
 {
     if (!mqttClient.connected()) return;
@@ -123,23 +132,29 @@ void publishState()
     const unsigned long uptimeS =
         static_cast<unsigned long>(esp_timer_get_time() / 1000000);
 
-    char climate[48] = "";
+    char climate[48] = ",\"temperature\":null,\"humidity\":null";
     if (sensorValueFresh()) {
         snprintf(climate, sizeof(climate),
                  ",\"temperature\":%.1f,\"humidity\":%.1f",
                  sensorTemperature, sensorHumidity);
     }
 
-    char payload[224];
-    snprintf(payload, sizeof(payload),
-             "{\"hdo\":%s,\"rssi\":%d,\"uptime\":%lu,\"ip\":\"%s\","
-             "\"reset\":\"%s\"%s}",
-             hdoState ? "true" : "false",
-             static_cast<int>(WiFi.RSSI()),
-             uptimeS,
-             WiFi.localIP().toString().c_str(),
-             resetReasonName,
-             climate);
+    char payload[256];
+    const int len = snprintf(
+        payload, sizeof(payload),
+        "{\"hdo\":%s,\"rssi\":%d,\"uptime\":%lu,\"ip\":\"%s\","
+        "\"reset\":\"%s\",\"fw\":\"%s\"%s}",
+        hdoState ? "true" : "false",
+        static_cast<int>(WiFi.RSSI()),
+        uptimeS,
+        WiFi.localIP().toString().c_str(),
+        resetReasonName,
+        FW_VERSION,
+        climate);
+    if (len < 0 || static_cast<size_t>(len) >= sizeof(payload)) {
+        LOG("MQTT: state payload too long");
+        return;
+    }
     mqttClient.publish(MQTT_STATE_TOPIC, payload, true);
 }
 
@@ -415,6 +430,9 @@ void startWiFi()
     WiFi.persistent(false);
     WiFi.setHostname(DEVICE_HOSTNAME);
     WiFi.mode(WIFI_STA);
+    // Napájení ze sítě: bez úsporného režimu Wi-Fi zařízení spolehlivěji
+    // odpovídá na mDNS, OTA pozvánky a MQTT keepalive.
+    WiFi.setSleep(false);
     WiFi.setAutoReconnect(true);
     WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 }
@@ -613,17 +631,16 @@ int dht20ReadStatus()
     return Wire.read();
 }
 
-void setupSensor()
+// Zjistí, zda DHT20 odpovídá; při úspěchu ho připraví k měření.
+bool probeSensor()
 {
-    // Senzor potřebuje po zapnutí napájení 100 ms.
-    while (millis() < DHT20_POWERUP_MS) {
-        delay(10);
-    }
-
     const int status = dht20ReadStatus();
     if (status < 0) {
-        LOG("DHT20: not found at 0x%02X", DHT20_I2C_ADDRESS);
-        return;
+        if (!sensorMissingLogged) {
+            LOG("DHT20: not found at 0x%02X", DHT20_I2C_ADDRESS);
+            sensorMissingLogged = true;
+        }
+        return false;
     }
     // Bity 3 a 4 = kalibrace načtená; jinak inicializace (příkaz 0xBE).
     if ((status & 0x18) != 0x18) {
@@ -634,18 +651,53 @@ void setupSensor()
     }
 
     sensorReady = true;
-    // První měření hned v prvním průchodu smyčkou.
+    sensorMeasuring = false;
+    sensorFailures = 0;
+    sensorMissingLogged = false;
+    // První měření hned v příštím průchodu smyčkou.
     sensorMeasureStart = millis() - SENSOR_READ_INTERVAL_MS;
     LOG("DHT20: found at 0x%02X", DHT20_I2C_ADDRESS);
+    return true;
+}
+
+void setupSensor()
+{
+    // Senzor potřebuje po zapnutí napájení 100 ms.
+    while (millis() < DHT20_POWERUP_MS) {
+        delay(10);
+    }
+
+    sensorLastProbe = millis();
+    probeSensor();
+}
+
+// Chyba měření. Po SENSOR_MAX_FAILURES v řadě se senzor považuje za
+// odpojený a updateSensor() ho začne znovu hledat.
+void sensorFailed()
+{
+    if (++sensorFailures < SENSOR_MAX_FAILURES) return;
+
+    LOG("DHT20: %u failures in a row, sensor lost", sensorFailures);
+    sensorReady = false;
+    sensorMeasuring = false;
+    sensorLastProbe = millis();
 }
 
 // Spustí měření každých SENSOR_READ_INTERVAL_MS a výsledek přečte
-// až po DHT20_MEASURE_MS, takže smyčku neblokuje.
+// až po DHT20_MEASURE_MS, takže smyčku neblokuje. Chybějící senzor
+// hledá každých SENSOR_PROBE_INTERVAL_MS.
 void updateSensor()
 {
-    if (!sensorReady) return;
-
     const unsigned long now = millis();
+
+    if (!sensorReady) {
+        if (now - sensorLastProbe < SENSOR_PROBE_INTERVAL_MS) return;
+        sensorLastProbe = now;
+        // Senzor připojený za běhu: HA entity teploty a vlhkosti se
+        // při připojení k brokeru nepublikovaly.
+        if (probeSensor()) publishDiscovery();
+        return;
+    }
 
     if (!sensorMeasuring) {
         if (now - sensorMeasureStart < SENSOR_READ_INTERVAL_MS) return;
@@ -655,6 +707,7 @@ void updateSensor()
             sensorMeasuring = true;
         } else {
             LOG("DHT20: trigger failed");
+            sensorFailed();
         }
         return;
     }
@@ -673,18 +726,22 @@ void updateSensor()
         if (now - sensorMeasureStart < DHT20_MEASURE_TIMEOUT_MS) return;
         LOG("DHT20: measurement timeout");
         sensorMeasuring = false;
+        sensorFailed();
         return;
     }
     sensorMeasuring = false;
 
     if (count != sizeof(data)) {
         LOG("DHT20: read failed (%u B)", count);
+        sensorFailed();
         return;
     }
     if (dht20Crc(data, 6) != data[6]) {
         LOG("DHT20: CRC error");
+        sensorFailed();
         return;
     }
+    sensorFailures = 0;
 
     // 20 bitů vlhkost, 20 bitů teplota (rozsah -50..150 °C).
     const uint32_t rawHumidity = (static_cast<uint32_t>(data[1]) << 12) |
