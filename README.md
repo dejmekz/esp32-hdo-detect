@@ -7,7 +7,11 @@
 - RGB LED se společnou katodou (katoda na GND): modrá GPIO3, červená GPIO4, zelená GPIO5
   - každá barva přes vlastní předřadný rezistor; jas se dolaďuje PWM (`LED_RED_BRIGHTNESS`, `LED_GREEN_BRIGHTNESS`, `LED_BLUE_BRIGHTNESS`)
   - LED se společnou anodou (na 3,3 V): nastav `LED_COMMON_ANODE = true` v `src/config.h`
-- OLED SSD1306 I2C (volitelný, ve výchozím buildu vypnutý): SDA GPIO8, SCL GPIO10, adresa 0x3C
+- I2C sběrnice (μŠup konektor): SDA GPIO8, SCL GPIO10 (`I2C_SDA_PIN`, `I2C_SCL_PIN`), sdílí ji senzor i OLED
+- Senzor teploty a vlhkosti Grove DHT20 (Temperature & Humidity Sensor V2.0, volitelný): I2C, adresa 0x38, napájení 3,3 V
+  - detekuje se při startu; bez senzoru zařízení běží dál, jen nepublikuje teplotu a vlhkost
+  - senzor umísti mimo desku ESP32 a zdroj - jejich ohřev zkresluje měření
+- OLED SSD1306 I2C (volitelný, ve výchozím buildu vypnutý): adresa 0x3C
   - zapíná se v `platformio.ini` flagem `-DHDO_OLED=1`; při adrese 0x3D změň `OLED_I2C_ADDRESS`
 
 ### Význam LED
@@ -81,10 +85,12 @@ Zachována původní témata:
 - `hdo/status`: `ON` = nízký tarif (NT), `OFF` = vysoký tarif (VT); log (a OLED) ukazují přímo `NT` / `VT`
 - `hdo/state`: JSON se stavem a diagnostikou, například
   ```json
-  {"hdo":true,"rssi":-62,"uptime":86400,"ip":"192.168.1.50","reset":"power on"}
+  {"hdo":true,"rssi":-62,"uptime":86400,"ip":"192.168.1.50","reset":"power on","temperature":21.4,"humidity":48.2}
   ```
   `uptime` je v sekundách, `reset` je důvod posledního restartu (např. `brownout`,
-  `task watchdog`). Klíč `hdo` zůstal, nové klíče starší konzumenty neruší.
+  `task watchdog`). `temperature` (°C) a `humidity` (%) z DHT20 jsou v JSON jen tehdy,
+  když je senzor připojený a poslední měření není starší než 30 s (měří se každých 10 s,
+  `SENSOR_READ_INTERVAL_MS`). Klíč `hdo` zůstal, nové klíče starší konzumenty neruší.
 
 Stav se publikuje při změně HDO, po připojení k brokeru a každých 60 s
 (`REPORT_INTERVAL_MS`); všechny zprávy jsou retained.
@@ -114,6 +120,8 @@ Thing mqtt:topic:mosquitto:hdo "HDO monitor" (mqtt:broker:mosquitto) @ "HDO"
     Type number : uptime      "Up time"               [ stateTopic="hdo/state", transformationPattern="JSONPATH:$.uptime", unit="s" ]
     Type string : reset       "Reset reason"          [ stateTopic="hdo/state", transformationPattern="JSONPATH:$.reset" ]
     Type string : ip          "IP address"            [ stateTopic="hdo/state", transformationPattern="JSONPATH:$.ip" ]
+    Type number : temperature "Teplota"               [ stateTopic="hdo/state", transformationPattern="JSONPATH:$.temperature", unit="°C" ]
+    Type number : humidity    "Vlhkost"               [ stateTopic="hdo/state", transformationPattern="JSONPATH:$.humidity", unit="%" ]
 }
 ```
 
@@ -127,6 +135,8 @@ Number       HDO_RSSI         "RSSI [%d dBm]"          <qualityofservice>  (gHdo
 Number:Time  HDO_UpTime       "Běží [%.1f h]"          <time>              (gHdo)  {channel="mqtt:topic:mosquitto:hdo:uptime"}
 String       HDO_ResetReason  "Důvod restartu [%s]"    <error>             (gHdo)  {channel="mqtt:topic:mosquitto:hdo:reset"}
 String       HDO_IP           "IP adresa [%s]"         <network>           (gHdo)  {channel="mqtt:topic:mosquitto:hdo:ip"}
+Number:Temperature   HDO_Temperature "Teplota [%.1f °C]"  <temperature>  (gHdo)  {channel="mqtt:topic:mosquitto:hdo:temperature"}
+Number:Dimensionless HDO_Humidity    "Vlhkost [%.0f %%]"  <humidity>     (gHdo)  {channel="mqtt:topic:mosquitto:hdo:humidity"}
 ```
 
 `transform/hdo.map`
@@ -148,6 +158,8 @@ převádí ON/OFF na ONLINE/OFFLINE - pokud ho nemáš, vynech `MAP(...)`:
       Text item=HDO_UpTime
       Text item=HDO_ResetReason valuecolor=[=="brownout"="red", =="task watchdog"="red", =="panic"="red"]
       Text item=HDO_IP
+      Text item=HDO_Temperature
+      Text item=HDO_Humidity
     }
   }
 ```
@@ -167,6 +179,7 @@ zařízení po každém připojení k brokeru publikuje (retained) MQTT discover
 konfiguraci do `homeassistant/.../config` a v HA se samo objeví zařízení
 **HDO monitor** s entitami:
 - HDO (binary sensor, `hdo/status`)
+- Temperature a Humidity (z `hdo/state`, jen když je DHT20 při startu připojený)
 - diagnostika: Wi-Fi signal, Uptime, Reset reason, IP address (z `hdo/state`)
 
 Dostupnost entit řídí `hdo/availability`. Verze firmwaru (čas sestavení) je

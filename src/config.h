@@ -32,13 +32,19 @@ constexpr uint8_t LED_BLUE_CHANNEL = 2;
 constexpr uint32_t LED_PWM_FREQ_HZ = 5000;
 constexpr uint8_t LED_PWM_RESOLUTION = 8;
 
+// Sběrnice I2C (μŠup konektor) - sdílí ji senzor DHT20 a OLED.
+constexpr uint8_t I2C_SDA_PIN = 8;
+constexpr uint8_t I2C_SCL_PIN = 10;
+
+// Senzor teploty a vlhkosti Grove DHT20 (AHT20) - volitelný,
+// při startu se detekuje; když chybí, hodnoty se nepublikují.
+constexpr uint8_t DHT20_I2C_ADDRESS = 0x38;
+
 // OLED displej - volitelný, zapíná se build flagem HDO_OLED=1
 // v platformio.ini.
 #ifndef HDO_OLED
 #define HDO_OLED 0
 #endif
-constexpr uint8_t OLED_SDA_PIN = 8;     // OLED I2C SDA
-constexpr uint8_t OLED_SCL_PIN = 10;    // OLED I2C SCL
 constexpr uint8_t OLED_I2C_ADDRESS = 0x3C;
 constexpr int8_t OLED_RESET_PIN = -1;
 
@@ -66,6 +72,14 @@ constexpr uint8_t HDO_ACTIVE_LEVEL = LOW;
 
 constexpr unsigned long HDO_DEBOUNCE_MS = 50;
 constexpr unsigned long REPORT_INTERVAL_MS = 60000;
+// DHT20: interval měření, doba převodu (datasheet 80 ms) a max. čekání
+// na dokončení. Po zapnutí napájení potřebuje senzor 100 ms.
+constexpr unsigned long SENSOR_READ_INTERVAL_MS = 10000;
+constexpr unsigned long DHT20_MEASURE_MS = 80;
+constexpr unsigned long DHT20_MEASURE_TIMEOUT_MS = 500;
+constexpr unsigned long DHT20_POWERUP_MS = 100;
+// Starší hodnota se nepublikuje (senzor přestal odpovídat).
+constexpr unsigned long SENSOR_STALE_MS = 3 * SENSOR_READ_INTERVAL_MS;
 // Jak dlouho nechat běžet automatický reconnect, než se Wi-Fi
 // restartuje ručně (disconnect + begin).
 constexpr unsigned long WIFI_RETRY_INTERVAL_MS = 30000;

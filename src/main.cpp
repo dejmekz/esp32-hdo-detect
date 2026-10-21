@@ -9,11 +9,11 @@
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
+#include <Wire.h>
 
 #include "config.h"
 
 #if HDO_OLED
-#include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 #endif
@@ -67,6 +67,16 @@ unsigned long lastOledRefresh = 0;
 unsigned long oledMessageSince = 0;
 unsigned long ledOtaErrorSince = 0;
 
+// DHT20: měření běží na pozadí (spuštění -> po 80 ms čtení), smyčka
+// na převod nečeká.
+bool sensorReady = false;
+bool sensorMeasuring = false;
+bool sensorHasValue = false;
+float sensorTemperature = NAN;
+float sensorHumidity = NAN;
+unsigned long sensorMeasureStart = 0;
+unsigned long sensorLastValue = 0;
+
 enum class LedColor : uint8_t { Off, Red, Green, Blue, Magenta };
 LedColor ledColor = LedColor::Off;
 bool ledColorSet = false;
@@ -97,7 +107,14 @@ void publishHdo()
 }
 
 
+// Platná a ne příliš stará hodnota z DHT20.
+bool sensorValueFresh()
+{
+    return sensorHasValue && millis() - sensorLastValue < SENSOR_STALE_MS;
+}
+
 // Stav + diagnostika. Klíč "hdo" zůstává kvůli kompatibilitě.
+// Teplota a vlhkost jen tehdy, když je k dispozici aktuální měření.
 void publishState()
 {
     if (!mqttClient.connected()) return;
@@ -106,15 +123,23 @@ void publishState()
     const unsigned long uptimeS =
         static_cast<unsigned long>(esp_timer_get_time() / 1000000);
 
-    char payload[160];
+    char climate[48] = "";
+    if (sensorValueFresh()) {
+        snprintf(climate, sizeof(climate),
+                 ",\"temperature\":%.1f,\"humidity\":%.1f",
+                 sensorTemperature, sensorHumidity);
+    }
+
+    char payload[224];
     snprintf(payload, sizeof(payload),
              "{\"hdo\":%s,\"rssi\":%d,\"uptime\":%lu,\"ip\":\"%s\","
-             "\"reset\":\"%s\"}",
+             "\"reset\":\"%s\"%s}",
              hdoState ? "true" : "false",
              static_cast<int>(WiFi.RSSI()),
              uptimeS,
              WiFi.localIP().toString().c_str(),
-             resetReasonName);
+             resetReasonName,
+             climate);
     mqttClient.publish(MQTT_STATE_TOPIC, payload, true);
 }
 
@@ -197,6 +222,26 @@ void publishDiscovery()
              "\"entity_category\":\"diagnostic\"",
              MQTT_STATE_TOPIC);
     publishDiscoveryEntity("sensor", "ip", fields);
+
+    if (sensorReady) {
+        snprintf(fields, sizeof(fields),
+                 "\"name\":\"Temperature\",\"state_topic\":\"%s\","
+                 "\"value_template\":\"{{ value_json.temperature }}\","
+                 "\"unit_of_measurement\":\"°C\","
+                 "\"device_class\":\"temperature\","
+                 "\"state_class\":\"measurement\"",
+                 MQTT_STATE_TOPIC);
+        publishDiscoveryEntity("sensor", "temperature", fields);
+
+        snprintf(fields, sizeof(fields),
+                 "\"name\":\"Humidity\",\"state_topic\":\"%s\","
+                 "\"value_template\":\"{{ value_json.humidity }}\","
+                 "\"unit_of_measurement\":\"%%\","
+                 "\"device_class\":\"humidity\","
+                 "\"state_class\":\"measurement\"",
+                 MQTT_STATE_TOPIC);
+        publishDiscoveryEntity("sensor", "humidity", fields);
+    }
 
     LOG("MQTT: Home Assistant discovery published");
 }
@@ -539,6 +584,125 @@ void updateHdo()
     publishState();
 }
 
+// CRC-8 DHT20: polynom 0x31, počáteční hodnota 0xFF.
+uint8_t dht20Crc(const uint8_t* data, size_t len)
+{
+    uint8_t crc = 0xFF;
+    for (size_t i = 0; i < len; i++) {
+        crc ^= data[i];
+        for (uint8_t bit = 0; bit < 8; bit++) {
+            crc = (crc & 0x80) ? (crc << 1) ^ 0x31 : crc << 1;
+        }
+    }
+    return crc;
+}
+
+bool dht20Write(const uint8_t* data, size_t len)
+{
+    Wire.beginTransmission(DHT20_I2C_ADDRESS);
+    Wire.write(data, len);
+    return Wire.endTransmission() == 0;
+}
+
+// Stavový bajt, -1 = senzor neodpovídá.
+int dht20ReadStatus()
+{
+    if (Wire.requestFrom(DHT20_I2C_ADDRESS, static_cast<uint8_t>(1)) != 1) {
+        return -1;
+    }
+    return Wire.read();
+}
+
+void setupSensor()
+{
+    // Senzor potřebuje po zapnutí napájení 100 ms.
+    while (millis() < DHT20_POWERUP_MS) {
+        delay(10);
+    }
+
+    const int status = dht20ReadStatus();
+    if (status < 0) {
+        LOG("DHT20: not found at 0x%02X", DHT20_I2C_ADDRESS);
+        return;
+    }
+    // Bity 3 a 4 = kalibrace načtená; jinak inicializace (příkaz 0xBE).
+    if ((status & 0x18) != 0x18) {
+        static const uint8_t init[] = {0xBE, 0x08, 0x00};
+        dht20Write(init, sizeof(init));
+        delay(10);
+        LOG("DHT20: status 0x%02X, initialized", status);
+    }
+
+    sensorReady = true;
+    // První měření hned v prvním průchodu smyčkou.
+    sensorMeasureStart = millis() - SENSOR_READ_INTERVAL_MS;
+    LOG("DHT20: found at 0x%02X", DHT20_I2C_ADDRESS);
+}
+
+// Spustí měření každých SENSOR_READ_INTERVAL_MS a výsledek přečte
+// až po DHT20_MEASURE_MS, takže smyčku neblokuje.
+void updateSensor()
+{
+    if (!sensorReady) return;
+
+    const unsigned long now = millis();
+
+    if (!sensorMeasuring) {
+        if (now - sensorMeasureStart < SENSOR_READ_INTERVAL_MS) return;
+        sensorMeasureStart = now;
+        static const uint8_t trigger[] = {0xAC, 0x33, 0x00};
+        if (dht20Write(trigger, sizeof(trigger))) {
+            sensorMeasuring = true;
+        } else {
+            LOG("DHT20: trigger failed");
+        }
+        return;
+    }
+
+    if (now - sensorMeasureStart < DHT20_MEASURE_MS) return;
+
+    uint8_t data[7];
+    const uint8_t count = Wire.requestFrom(DHT20_I2C_ADDRESS,
+                                           static_cast<uint8_t>(sizeof(data)));
+    for (uint8_t i = 0; i < count && i < sizeof(data); i++) {
+        data[i] = Wire.read();
+    }
+
+    if (count == sizeof(data) && (data[0] & 0x80)) {
+        // Převod ještě běží - zkusit v dalším průchodu, nejvýš do timeoutu.
+        if (now - sensorMeasureStart < DHT20_MEASURE_TIMEOUT_MS) return;
+        LOG("DHT20: measurement timeout");
+        sensorMeasuring = false;
+        return;
+    }
+    sensorMeasuring = false;
+
+    if (count != sizeof(data)) {
+        LOG("DHT20: read failed (%u B)", count);
+        return;
+    }
+    if (dht20Crc(data, 6) != data[6]) {
+        LOG("DHT20: CRC error");
+        return;
+    }
+
+    // 20 bitů vlhkost, 20 bitů teplota (rozsah -50..150 °C).
+    const uint32_t rawHumidity = (static_cast<uint32_t>(data[1]) << 12) |
+                                 (static_cast<uint32_t>(data[2]) << 4) |
+                                 (data[3] >> 4);
+    const uint32_t rawTemperature =
+        (static_cast<uint32_t>(data[3] & 0x0F) << 16) |
+        (static_cast<uint32_t>(data[4]) << 8) | data[5];
+    sensorHumidity = rawHumidity * 100.0f / 1048576.0f;
+    sensorTemperature = rawTemperature * 200.0f / 1048576.0f - 50.0f;
+
+    if (!sensorHasValue) {
+        LOG("DHT20: %.1f °C, %.1f %%", sensorTemperature, sensorHumidity);
+    }
+    sensorHasValue = true;
+    sensorLastValue = now;
+}
+
 // NT = zelená, VT = červená. Svítí trvale, když je Wi-Fi i MQTT
 // připojené; jinak bliká (rychle bez Wi-Fi, pomalu bez MQTT).
 // Po chybě OTA rychle bliká fialově.
@@ -628,7 +792,6 @@ void refreshOLED()
 void setupOLED()
 {
 #if HDO_OLED
-    Wire.begin(OLED_SDA_PIN, OLED_SCL_PIN);
     oledReady = display.begin(SSD1306_SWITCHCAPVCC, OLED_I2C_ADDRESS);
     if (!oledReady) LOG("OLED: not found at 0x%02X", OLED_I2C_ADDRESS);
 
@@ -693,6 +856,8 @@ void setup()
         mqttClientId);
     LOG("HDO: initial tariff %s", tariffText());
 
+    Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
+    setupSensor();
     setupOLED();
 
     wifiClient.setTimeout(MQTT_CONNECT_TIMEOUT_S);
@@ -731,6 +896,7 @@ void loop()
     mqttWasConnected = mqttConnected;
 
     updateHdo();
+    updateSensor();
 
     const unsigned long now = millis();
     if (now - lastReport >= REPORT_INTERVAL_MS) {
