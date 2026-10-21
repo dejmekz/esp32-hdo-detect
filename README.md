@@ -209,10 +209,12 @@ převádí ON/OFF na ONLINE/OFFLINE - pokud ho nemáš, vynech `MAP(...)`:
       Text item=HDO_Firmware
       Text item=HDO_Temperature
       Text item=HDO_Humidity
+      Chart item=HDO_Temperature label="Teplota (24 h)" period=D refresh=60000 legend=true
+      Chart item=HDO_Humidity label="Vlhkost (24 h)" period=D refresh=60000 legend=true
       Text item=HDO_Heap
       Text item=HDO_HeapMin
-      Chart item=HDO_Heap period=D refresh=60000
-      Chart item=HDO_HeapMin period=W refresh=60000
+      Chart item=HDO_Heap label="Volný heap (24 h)" period=D refresh=60000 legend=true
+      Chart item=HDO_HeapMin label="Min. volný heap (týden)" period=W refresh=60000 legend=true
       Switch item=HDO_Command mappings=[restart="Restart"]
     }
   }
