@@ -236,5 +236,5 @@ odstraň - jinak bude v HA dvakrát. Odebrání zařízení z HA po vypnutí dis
 - Ochrana OLED proti vypálení: snížený jas (`OLED_CONTRAST`) a posun obsahu o pár pixelů každých 5 min (`OLED_SHIFT_INTERVAL_MS`).
 - Watchdog: když se hlavní smyčka zasekne na déle než 30 s (`WATCHDOG_TIMEOUT_S`), zařízení se restartuje; v logu je pak důvod resetu `task watchdog`.
 - Přihlašovací údaje Wi-Fi/MQTT jsou v `src/secrets.h`, který se necommituje.
-- MQTT host končící na `.local` se překládá přes mDNS; pevná IP adresa je spolehlivější.
+- MQTT broker je zadán pevnou IP adresou (`MQTT_HOST`, DHCP rezervace pro Raspberry Pi). Host končící na `.local` by se překládal přes mDNS.
 - MQTT connect knihovny PubSubClient je synchronní krátký síťový pokus (TCP timeout 2 s); opakování je časované z hlavní smyčky s exponenciálním odstupem 5 s → 60 s, aby nedostupný broker neblokoval smyčku (a tím ani OTA). Adresa `.local` se znovu překládá až po 3 neúspěších v řadě.

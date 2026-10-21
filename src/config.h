@@ -139,9 +139,9 @@ constexpr uint32_t SERIAL_TX_TIMEOUT_MS = 10;
 // MQTT
 // ============================================================
 
-// Hostname končící na ".local" se překládá přes mDNS.
-// Spolehlivější je pevná IP adresa, např. "192.168.1.10".
-constexpr char MQTT_HOST[] = "raspi4server.local";
+// Pevná IP adresa brokeru (raspi4server, rezervace v DHCP routeru).
+// Lze zadat i hostname; končící na ".local" se překládá přes mDNS.
+constexpr char MQTT_HOST[] = "192.168.1.230";
 constexpr uint16_t MQTT_PORT = 1883;
 
 // MQTT topics - zachována kompatibilita s původním projektem.
