@@ -136,7 +136,7 @@ Number:Time  HDO_UpTime       "Běží [%.1f h]"          <time>              (g
 String       HDO_ResetReason  "Důvod restartu [%s]"    <error>             (gHdo)  {channel="mqtt:topic:mosquitto:hdo:reset"}
 String       HDO_IP           "IP adresa [%s]"         <network>           (gHdo)  {channel="mqtt:topic:mosquitto:hdo:ip"}
 Number:Temperature   HDO_Temperature "Teplota [%.1f °C]"  <temperature>  (gHdo)  {channel="mqtt:topic:mosquitto:hdo:temperature"}
-Number:Dimensionless HDO_Humidity    "Vlhkost [%.0f %%]"  <humidity>     (gHdo)  {channel="mqtt:topic:mosquitto:hdo:humidity"}
+Number:Dimensionless HDO_Humidity    "Vlhkost [%.0f %%]"  <humidity>     (gHdo)  {channel="mqtt:topic:mosquitto:hdo:humidity", unit="%"}
 ```
 
 `transform/hdo.map`
