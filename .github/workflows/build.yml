@@ -1,0 +1,33 @@
+name: Build
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
+
+      - name: Install PlatformIO
+        run: pip install platformio
+
+      # secrets.h není v gitu; pro build stačí šablona.
+      - name: Secrets from template
+        run: cp src/secrets.example.h src/secrets.h
+
+      - name: Unit tests
+        run: pio test -e native
+
+      - name: Build firmware (LED, OLED)
+        run: pio run -e esp32-c3-devkitm-1 -e esp32-c3-oled

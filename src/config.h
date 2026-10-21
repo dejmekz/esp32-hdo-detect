@@ -101,8 +101,8 @@ constexpr uint32_t MQTT_CONNECT_TIMEOUT_S = 2;
 constexpr uint8_t MQTT_RESOLVE_AFTER_FAILURES = 3;
 constexpr unsigned long MDNS_QUERY_TIMEOUT_MS = 2000;
 constexpr unsigned long OLED_REFRESH_INTERVAL_MS = 500;
-// Jak dlouho nechat na OLED / LED chybovou hlášku (OTA ERROR).
-constexpr unsigned long OLED_MESSAGE_HOLD_MS = 10000;
+// Jak dlouho po chybě OTA LED bliká fialově (a OLED ukazuje OTA ERROR).
+constexpr unsigned long ERROR_HOLD_MS = 10000;
 // Blikání LED: rychle = bez Wi-Fi, pomalu = Wi-Fi OK, ale bez MQTT.
 // Hodnota = délka jedné fáze (svítí / nesvítí).
 constexpr unsigned long LED_BLINK_FAST_MS = 150;

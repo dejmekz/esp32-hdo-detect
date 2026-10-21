@@ -11,10 +11,13 @@
 - Senzor teploty a vlhkosti Grove DHT20 (Temperature & Humidity Sensor V2.0, volitelný): I2C, adresa 0x38, napájení 3,3 V
   - detekuje se při startu a pak každou minutu (`SENSOR_PROBE_INTERVAL_MS`), lze ho tedy připojit i za běhu;
     po 3 chybách měření v řadě se považuje za odpojený a hledá se znovu
+  - když stavový bajt nehlásí kalibraci, inicializují se registry 0x1B, 0x1C a 0x1E podle vzorového kódu výrobce
   - bez senzoru zařízení běží dál, teplota a vlhkost jsou v `hdo/state` jako `null`
   - senzor umísti mimo desku ESP32 a zdroj - jejich ohřev zkresluje měření
 - OLED SSD1306 I2C (volitelný, ve výchozím buildu vypnutý): adresa 0x3C
-  - zapíná se v `platformio.ini` flagem `-DHDO_OLED=1`; při adrese 0x3D změň `OLED_I2C_ADDRESS`
+  - build s OLED: prostředí `esp32-c3-oled` (`pio run -e esp32-c3-oled -t upload`); pro OTA upload
+    s OLED změň v `platformio.ini` u `env:esp32-c3-devkitm-1` flag na `-DHDO_OLED=1`
+  - při adrese 0x3D změň `OLED_I2C_ADDRESS`
 
 ### Význam LED
 | LED | Stav |
@@ -33,6 +36,25 @@ U HDO vstupu použij externí pull-up na 3,3 V (např. 10 kΩ), pokud jej již n
 1. Zkopíruj `src/secrets.example.h` na `src/secrets.h` a vyplň Wi-Fi/MQTT údaje (`secrets.h` je v `.gitignore`).
 2. Zkopíruj `ota.secret.ini.example` na `ota.secret.ini` a nastav stejné heslo jako `OTA_PASSWORD` v `secrets.h`.
 3. Otevři adresář projektu ve VS Code s PlatformIO a proveď Build/Upload (první nahrání přes USB).
+
+### Struktura kódu
+| Soubor | Obsah |
+|---|---|
+| `src/main.cpp` | `setup()` / `loop()`, sériový log, watchdog, důvod resetu |
+| `src/hdo.*` | vstup HDO s debounce |
+| `src/sensor.*` | DHT20: měření na pozadí, hledání za běhu |
+| `src/led.*` | stavová RGB LED |
+| `src/display.*` | volitelný OLED (`HDO_OLED`) |
+| `src/network.*` | Wi-Fi, MQTT, publikování, HA discovery |
+| `src/ota.*` | OTA přes Wi-Fi |
+| `src/config.h` | nastavení (piny, časy, MQTT) |
+| `lib/HdoCore/` | čistá logika bez Arduino API (debounce, odstup, DHT20, LED, JSON) - pokrytá unit testy |
+
+### Testy a CI
+- Unit testy logiky z `lib/HdoCore` (`test/test_core`): `pio test -e native`.
+  Potřebují `gcc`/`g++` v PATH (na Windows např. MSYS2/MinGW), jinak běží v CI.
+- GitHub Actions (`.github/workflows/build.yml`) při každém push spustí testy a sestaví
+  firmware s LED i s OLED; `secrets.h` se v CI vytvoří ze šablony.
 
 ## OTA (aktualizace přes Wi-Fi)
 Po prvním nahrání přes USB lze další verze nahrávat bezdrátově – zařízení
@@ -206,7 +228,7 @@ odstraň - jinak bude v HA dvakrát. Odebrání zařízení z HA po vypnutí dis
   a bez něj spolehlivěji odpovídá na mDNS, OTA a MQTT. Průměrný odběr je o desítky mA vyšší.
 - HDO se čte pollingem v každém průchodu smyčky s neblokujícím debounce (50 ms).
 - LED se obnovuje v každém průchodu smyčky; při blokujícím pokusu o MQTT/mDNS (až 2 s) se blikání krátce zastaví.
-- OLED (je-li zapnutý) se obnovuje každých 500 ms; chybová hláška OTA na něm (i fialové blikání LED) zůstane 10 s (`OLED_MESSAGE_HOLD_MS`).
+- OLED (je-li zapnutý) se obnovuje každých 500 ms; chybová hláška OTA na něm (i fialové blikání LED) zůstane 10 s (`ERROR_HOLD_MS`).
 - Ochrana OLED proti vypálení: snížený jas (`OLED_CONTRAST`) a posun obsahu o pár pixelů každých 5 min (`OLED_SHIFT_INTERVAL_MS`).
 - Watchdog: když se hlavní smyčka zasekne na déle než 30 s (`WATCHDOG_TIMEOUT_S`), zařízení se restartuje; v logu je pak důvod resetu `task watchdog`.
 - Přihlašovací údaje Wi-Fi/MQTT jsou v `src/secrets.h`, který se necommituje.
