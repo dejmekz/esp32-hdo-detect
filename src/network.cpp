@@ -13,6 +13,7 @@
 #include "hdo.h"
 #include "log.h"
 #include "ota.h"
+#include "restart.h"
 #include "sensor.h"
 #include "version.h"
 
@@ -22,6 +23,9 @@ static PubSubClient mqttClient(wifiClient);
 static bool wifiWasConnected = false;
 static bool mqttWasConnected = false;
 static bool mqttServerResolved = false;
+// Povel restart se provede až v networkLoop(), ne v callbacku
+// uvnitř mqttClient.loop().
+static bool restartRequested = false;
 static Backoff mqttBackoff(MQTT_RETRY_MIN_MS, MQTT_RETRY_MAX_MS);
 
 static char mqttClientId[24];
@@ -60,11 +64,14 @@ void publishState()
     info.ip = ip.c_str();
     info.resetReason = resetReasonName;
     info.firmware = FW_VERSION;
+    info.freeHeap = ESP.getFreeHeap();
+    info.minFreeHeap = ESP.getMinFreeHeap();
+    info.tariffS = hdoTariffSeconds();
     info.climateValid = sensorFresh();
     info.temperature = sensorTemperature();
     info.humidity = sensorHumidity();
 
-    char payload[256];
+    char payload[320];
     if (!formatStateJson(payload, sizeof(payload), info)) {
         LOG("MQTT: state payload too long");
         return;
@@ -158,6 +165,23 @@ void publishDiscovery()
              MQTT_STATE_TOPIC);
     publishDiscoveryEntity("sensor", "ip", fields);
 
+    snprintf(fields, sizeof(fields),
+             "\"name\":\"Free heap\",\"state_topic\":\"%s\","
+             "\"value_template\":\"{{ value_json.heap }}\","
+             "\"unit_of_measurement\":\"B\","
+             "\"state_class\":\"measurement\","
+             "\"entity_category\":\"diagnostic\"",
+             MQTT_STATE_TOPIC);
+    publishDiscoveryEntity("sensor", "heap", fields);
+
+    snprintf(fields, sizeof(fields),
+             "\"name\":\"Restart\",\"command_topic\":\"%s\","
+             "\"payload_press\":\"restart\","
+             "\"device_class\":\"restart\","
+             "\"entity_category\":\"config\"",
+             MQTT_COMMAND_TOPIC);
+    publishDiscoveryEntity("button", "restart", fields);
+
     if (sensorPresent()) {
         snprintf(fields, sizeof(fields),
                  "\"name\":\"Temperature\",\"state_topic\":\"%s\","
@@ -185,6 +209,41 @@ void mqttGoOffline()
 {
     publishAvailability("OFFLINE");
     mqttClient.disconnect();
+}
+
+static void onMqttMessage(char* topic, uint8_t* payload, unsigned int length)
+{
+    if (strcmp(topic, MQTT_COMMAND_TOPIC) != 0) return;
+    // Prázdná zpráva = smazání retained povelu, nic nedělat.
+    if (length == 0) return;
+
+    char command[16];
+    if (length >= sizeof(command)) {
+        LOG("MQTT: command too long, ignored");
+        return;
+    }
+    memcpy(command, payload, length);
+    command[length] = '\0';
+
+    if (strcasecmp(command, "restart") == 0) {
+        LOG("MQTT: restart command received");
+        restartRequested = true;
+    } else {
+        LOG("MQTT: unknown command \"%s\"", command);
+    }
+}
+
+static void handleRestartRequest()
+{
+    if (!restartRequested) return;
+
+    // Retained povel smazat, jinak by se zařízení po každém připojení
+    // k brokeru restartovalo znovu.
+    mqttClient.publish(MQTT_COMMAND_TOPIC, nullptr, 0, true);
+    mqttGoOffline();
+    LOG("Restarting on command");
+    delay(100);
+    restartOnCommand();
 }
 
 static void mqttAttemptFailed()
@@ -335,6 +394,9 @@ static void connectMQTTIfNeeded()
     if (connected) {
         LOG("MQTT: connected as %s", mqttClientId);
         mqttBackoff.reset();
+        if (!mqttClient.subscribe(MQTT_COMMAND_TOPIC)) {
+            LOG("MQTT: subscribe to %s failed", MQTT_COMMAND_TOPIC);
+        }
         publishAvailability("ONLINE");
         publishDiscovery();
         publishAll();
@@ -360,6 +422,7 @@ void networkSetup(const char* resetReason)
     wifiClient.setTimeout(MQTT_CONNECT_TIMEOUT_S);
     mqttClient.setSocketTimeout(1);
     mqttClient.setKeepAlive(30);
+    mqttClient.setCallback(onMqttMessage);
     if (!mqttClient.setBufferSize(MQTT_BUFFER_SIZE)) {
         LOG("MQTT: cannot allocate %u B buffer",
             static_cast<unsigned int>(MQTT_BUFFER_SIZE));
@@ -377,6 +440,7 @@ void networkLoop()
     if (mqttClient.connected()) {
         mqttClient.loop();
     }
+    handleRestartRequest();
 
     const bool connected = mqttClient.connected();
     if (mqttWasConnected && !connected) {

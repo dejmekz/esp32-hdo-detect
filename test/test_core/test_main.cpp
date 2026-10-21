@@ -163,6 +163,9 @@ static StateInfo sampleState()
     s.ip = "192.168.1.50";
     s.resetReason = "power on";
     s.firmware = "baeedec";
+    s.freeHeap = 201234;
+    s.minFreeHeap = 187654;
+    s.tariffS = 3600;
     s.climateValid = true;
     s.temperature = 21.44f;
     s.humidity = 48.24f;
@@ -171,11 +174,12 @@ static StateInfo sampleState()
 
 void test_state_json_with_climate()
 {
-    char buf[256];
+    char buf[320];
     TEST_ASSERT_TRUE(formatStateJson(buf, sizeof(buf), sampleState()));
     TEST_ASSERT_EQUAL_STRING(
         "{\"hdo\":true,\"rssi\":-62,\"uptime\":86400,\"ip\":\"192.168.1.50\","
         "\"reset\":\"power on\",\"fw\":\"baeedec\","
+        "\"heap\":201234,\"heap_min\":187654,\"tariff_s\":3600,"
         "\"temperature\":21.4,\"humidity\":48.2}",
         buf);
 }

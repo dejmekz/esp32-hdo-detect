@@ -47,6 +47,7 @@ U HDO vstupu použij externí pull-up na 3,3 V (např. 10 kΩ), pokud jej již n
 | `src/display.*` | volitelný OLED (`HDO_OLED`) |
 | `src/network.*` | Wi-Fi, MQTT, publikování, HA discovery |
 | `src/ota.*` | OTA přes Wi-Fi |
+| `src/restart.*` | restart na povel z MQTT (rozlišený důvod resetu) |
 | `src/config.h` | nastavení (piny, časy, MQTT) |
 | `lib/HdoCore/` | čistá logika bez Arduino API (debounce, odstup, DHT20, LED, JSON) - pokrytá unit testy |
 
@@ -113,14 +114,20 @@ Zachována původní témata:
 - `hdo/status`: `ON` = nízký tarif (NT), `OFF` = vysoký tarif (VT); log (a OLED) ukazují přímo `NT` / `VT`
 - `hdo/state`: JSON se stavem a diagnostikou, například
   ```json
-  {"hdo":true,"rssi":-62,"uptime":86400,"ip":"192.168.1.50","reset":"power on","fw":"3cc3749","temperature":21.4,"humidity":48.2}
+  {"hdo":true,"rssi":-62,"uptime":86400,"ip":"192.168.1.50","reset":"power on","fw":"3cc3749","heap":210620,"heap_min":199896,"tariff_s":3600,"temperature":21.4,"humidity":48.2}
   ```
   `uptime` je v sekundách, `reset` je důvod posledního restartu (např. `brownout`,
-  `task watchdog`), `fw` je verze firmwaru z `git describe` (`-dirty` = sestaveno
-  z necommitnutých změn). `temperature` (°C) a `humidity` (%) z DHT20 mají hodnotu
+  `task watchdog`, `mqtt command`), `fw` je verze firmwaru z `git describe` (`-dirty` = sestaveno
+  z necommitnutých změn). `heap` je volná paměť a `heap_min` její minimum od startu
+  (B) - trvalý pokles `heap_min` značí únik paměti. `tariff_s` je doba trvání
+  aktuálního tarifu v sekundách: od poslední změny, nebo od startu zařízení, pokud
+  se od něj tarif nezměnil (po restartu se počítá znovu). `temperature` (°C) a `humidity` (%) z DHT20 mají hodnotu
   jen tehdy, když je senzor připojený a poslední měření není starší než 30 s (měří se
   každých 10 s, `SENSOR_READ_INTERVAL_MS`); jinak jsou `null`. Klíč `hdo` zůstal,
   nové klíče starší konzumenty neruší.
+- `hdo/cmd`: povely pro zařízení (zařízení je odebírá). `restart` = čistý restart
+  (před ním `OFFLINE`, po startu je důvod resetu `mqtt command`). Případný retained
+  povel zařízení před restartem smaže, aby se nerestartovalo opakovaně.
 
 Stav se publikuje při změně HDO, po připojení k brokeru a každých 60 s
 (`REPORT_INTERVAL_MS`); všechny zprávy jsou retained.
@@ -153,6 +160,10 @@ Thing mqtt:topic:mosquitto:hdo "HDO monitor" (mqtt:broker:mosquitto) @ "HDO"
     Type string : fw          "Firmware"              [ stateTopic="hdo/state", transformationPattern="JSONPATH:$.fw" ]
     Type number : temperature "Teplota"               [ stateTopic="hdo/state", transformationPattern="JSONPATH:$.temperature", unit="°C" ]
     Type number : humidity    "Vlhkost"               [ stateTopic="hdo/state", transformationPattern="JSONPATH:$.humidity", unit="%" ]
+    Type number : heap        "Free heap"             [ stateTopic="hdo/state", transformationPattern="JSONPATH:$.heap" ]
+    Type number : heapmin     "Min free heap"         [ stateTopic="hdo/state", transformationPattern="JSONPATH:$.heap_min" ]
+    Type number : tariff      "Tariff duration"       [ stateTopic="hdo/state", transformationPattern="JSONPATH:$.tariff_s", unit="s" ]
+    Type string : cmd         "Command"               [ commandTopic="hdo/cmd" ]
 }
 ```
 
@@ -169,6 +180,10 @@ String       HDO_IP           "IP adresa [%s]"         <network>           (gHdo
 String       HDO_Firmware     "Firmware [%s]"          <settings>          (gHdo)  {channel="mqtt:topic:mosquitto:hdo:fw"}
 Number:Temperature   HDO_Temperature "Teplota [%.1f °C]"  <temperature>  (gHdo)  {channel="mqtt:topic:mosquitto:hdo:temperature", expire="3m"}
 Number:Dimensionless HDO_Humidity    "Vlhkost [%.0f %%]"  <humidity>     (gHdo)  {channel="mqtt:topic:mosquitto:hdo:humidity", unit="%", expire="3m"}
+Number       HDO_Heap         "Volný heap [%d B]"      <chart>             (gHdo)  {channel="mqtt:topic:mosquitto:hdo:heap"}
+Number       HDO_HeapMin      "Min. volný heap [%d B]" <chart>             (gHdo)  {channel="mqtt:topic:mosquitto:hdo:heapmin"}
+Number:Time  HDO_TariffTime   "Tarif trvá [%.1f h]"    <time>              (gHdo)  {channel="mqtt:topic:mosquitto:hdo:tariff"}
+String       HDO_Command      "Povel"                  <switch>            (gHdo)  {channel="mqtt:topic:mosquitto:hdo:cmd", autoupdate="false"}
 ```
 
 `transform/hdo.map`
@@ -185,6 +200,7 @@ převádí ON/OFF na ONLINE/OFFLINE - pokud ho nemáš, vynech `MAP(...)`:
   Frame label="HDO"
   {
     Text item=HDO_LowTariff label="Tarif [MAP(hdo.map):%s]" icon="energy" valuecolor=[ON="green", OFF="orange"] {
+      Text item=HDO_TariffTime
       Text item=HDO_Reachable label="Dostupnost [MAP(switch2online.map):%s]" valuecolor=[ON="green", OFF="red"]
       Text item=HDO_RSSI
       Text item=HDO_UpTime
@@ -193,12 +209,19 @@ převádí ON/OFF na ONLINE/OFFLINE - pokud ho nemáš, vynech `MAP(...)`:
       Text item=HDO_Firmware
       Text item=HDO_Temperature
       Text item=HDO_Humidity
+      Text item=HDO_Heap
+      Text item=HDO_HeapMin
+      Switch item=HDO_Command mappings=[restart="Restart"]
     }
   }
 ```
 
-- Kanály nemají `commandTopic`, jsou jen pro čtení; v sitemapě jsou proto
+- Stavové kanály nemají `commandTopic`, jsou jen pro čtení; v sitemapě jsou proto
   jako `Text`, ne `Switch` (přepnutí v UI by jen změnilo stav položky).
+- `HDO_Command` posílá povely do `hdo/cmd`; v sitemapě je to tlačítko
+  **Restart**. `autoupdate="false"`: položka si povel nepamatuje jako stav.
+- `HDO_Heap` a `HDO_HeapMin` stojí za to ukládat (persistence) - pomalý
+  pokles v grafu odhalí únik paměti dřív, než zařízení spadne.
 - Díky `availabilityTopic` přejde Thing do stavu OFFLINE, když zařízení
   vypadne (LWT) nebo se restartuje kvůli OTA; totéž ukazuje `HDO_Reachable`.
 - `HDO_LowTariff` = ON znamená nízký tarif (NT). Na něj lze navázat pravidla,
@@ -216,7 +239,8 @@ konfiguraci do `homeassistant/.../config` a v HA se samo objeví zařízení
 **HDO monitor** s entitami:
 - HDO (binary sensor, `hdo/status`)
 - Temperature a Humidity (z `hdo/state`, jakmile je DHT20 detekován - i za běhu)
-- diagnostika: Wi-Fi signal, Uptime, Reset reason, IP address (z `hdo/state`)
+- diagnostika: Wi-Fi signal, Uptime, Reset reason, IP address, Free heap (z `hdo/state`)
+- tlačítko Restart (posílá `restart` do `hdo/cmd`)
 
 Dostupnost entit řídí `hdo/availability`. Verze firmwaru (git verze a čas sestavení) je
 v informacích o zařízení, takže je vidět, zda OTA prošla.

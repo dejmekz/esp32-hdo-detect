@@ -148,6 +148,8 @@ constexpr uint16_t MQTT_PORT = 1883;
 constexpr char MQTT_HDO_TOPIC[] = "hdo/status";
 constexpr char MQTT_STATE_TOPIC[] = "hdo/state";
 constexpr char MQTT_AVAILABILITY_TOPIC[] = "hdo/availability";
+// Povely pro zařízení: "restart". Retained povel se po provedení smaže.
+constexpr char MQTT_COMMAND_TOPIC[] = "hdo/cmd";
 
 // Buffer PubSubClient (výchozí 256 B) - discovery zprávy jsou delší.
 constexpr uint16_t MQTT_BUFFER_SIZE = 768;

@@ -12,6 +12,13 @@ struct StateInfo {
     const char* ip;
     const char* resetReason;
     const char* firmware;
+    // Volná paměť heapu teď a nejnižší od startu (B) - únik paměti
+    // se projeví postupným poklesem minFreeHeap.
+    uint32_t freeHeap;
+    uint32_t minFreeHeap;
+    // Jak dlouho (s) trvá aktuální tarif - od poslední změny, nebo od
+    // startu zařízení, pokud se od něj tarif nezměnil.
+    uint32_t tariffS;
     // false = teplota a vlhkost se publikují jako null.
     bool climateValid;
     float temperature;
@@ -34,13 +41,17 @@ inline bool formatStateJson(char* buf, size_t size, const StateInfo& s)
     const int len = snprintf(
         buf, size,
         "{\"hdo\":%s,\"rssi\":%d,\"uptime\":%lu,\"ip\":\"%s\","
-        "\"reset\":\"%s\",\"fw\":\"%s\"%s}",
+        "\"reset\":\"%s\",\"fw\":\"%s\",\"heap\":%lu,\"heap_min\":%lu,"
+        "\"tariff_s\":%lu%s}",
         s.lowTariff ? "true" : "false",
         s.rssi,
         static_cast<unsigned long>(s.uptimeS),
         s.ip,
         s.resetReason,
         s.firmware,
+        static_cast<unsigned long>(s.freeHeap),
+        static_cast<unsigned long>(s.minFreeHeap),
+        static_cast<unsigned long>(s.tariffS),
         climate);
     return len >= 0 && static_cast<size_t>(len) < size;
 }

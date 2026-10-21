@@ -10,6 +10,7 @@
 #include "log.h"
 #include "network.h"
 #include "ota.h"
+#include "restart.h"
 #include "sensor.h"
 #include "version.h"
 
@@ -63,7 +64,9 @@ void setup()
     hdoSetup();
 
     const esp_reset_reason_t resetReason = esp_reset_reason();
-    const char* resetReasonName = resetReasonText(resetReason);
+    const char* resetReasonName = restartedOnCommand()
+                                      ? "mqtt command"
+                                      : resetReasonText(resetReason);
     LOG("HDO monitor start, build %s, reset reason %d (%s)",
         FIRMWARE_BUILD, static_cast<int>(resetReason), resetReasonName);
     LOG("HDO: initial tariff %s", hdoTariffText());
