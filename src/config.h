@@ -119,6 +119,10 @@ constexpr uint32_t WATCHDOG_TIMEOUT_S = 30;
 // Hostname pro Wi-Fi, mDNS a OTA => OTA adresa "hdo-monitor.local".
 constexpr char DEVICE_HOSTNAME[] = "hdo-monitor";
 
+// Vysílací výkon Wi-Fi za běžného provozu. Nižší výkon = nižší proudové
+// špičky při vysílání (brownout reset při slabším napájení).
+constexpr wifi_power_t WIFI_TX_POWER = WIFI_POWER_11dBm;
+
 // Vysílací výkon Wi-Fi během OTA. Při plném výkonu (19.5 dBm) způsoboval
 // souběžný zápis do flash a vysílání brownout reset desky.
 constexpr wifi_power_t OTA_WIFI_TX_POWER = WIFI_POWER_11dBm;

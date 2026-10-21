@@ -200,6 +200,7 @@ static void startWiFi()
     WiFi.persistent(false);
     WiFi.setHostname(DEVICE_HOSTNAME);
     WiFi.mode(WIFI_STA);
+    WiFi.setTxPower(WIFI_TX_POWER);
     // Napájení ze sítě: bez úsporného režimu Wi-Fi zařízení spolehlivěji
     // odpovídá na mDNS, OTA pozvánky a MQTT keepalive.
     WiFi.setSleep(false);

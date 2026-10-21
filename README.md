@@ -101,6 +101,10 @@ restartem pošle do `hdo/availability` hodnotu `OFFLINE`, po startu (~5 s) zase 
 ## Sériový log
 - Výstup jde přes nativní USB (115200), řádky mají čas od startu v ms.
 - Po startu se vypíše důvod resetu (např. `brownout`, `panic`) - užitečné při diagnostice.
+- Opakované restarty s důvodem `brownout` = napájení nezvládá proudové špičky
+  při vysílání Wi-Fi. Vysílací výkon je proto i za běžného provozu snížen
+  na 11 dBm (`WIFI_TX_POWER` v `config.h`); pomůže i kondenzátor 470–1000 µF
+  na 5 V u desky a krátký, kvalitní napájecí kabel.
 - Otevření portu běžným terminálem může desku resetovat; vypnutí logu: `SERIAL_LOGGING = false` v `config.h`.
 
 ## MQTT
