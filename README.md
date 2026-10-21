@@ -211,6 +211,8 @@ převádí ON/OFF na ONLINE/OFFLINE - pokud ho nemáš, vynech `MAP(...)`:
       Text item=HDO_Humidity
       Text item=HDO_Heap
       Text item=HDO_HeapMin
+      Chart item=HDO_Heap period=D refresh=60000
+      Chart item=HDO_HeapMin period=W refresh=60000
       Switch item=HDO_Command mappings=[restart="Restart"]
     }
   }
@@ -220,8 +222,9 @@ převádí ON/OFF na ONLINE/OFFLINE - pokud ho nemáš, vynech `MAP(...)`:
   jako `Text`, ne `Switch` (přepnutí v UI by jen změnilo stav položky).
 - `HDO_Command` posílá povely do `hdo/cmd`; v sitemapě je to tlačítko
   **Restart**. `autoupdate="false"`: položka si povel nepamatuje jako stav.
-- `HDO_Heap` a `HDO_HeapMin` stojí za to ukládat (persistence) - pomalý
-  pokles v grafu odhalí únik paměti dřív, než zařízení spadne.
+- `HDO_Heap` a `HDO_HeapMin` stojí za to ukládat (persistence, např. rrd4j
+  se strategií `everyMinute`) - pomalý pokles v grafu (`Chart`) odhalí únik
+  paměti dřív, než zařízení spadne.
 - Díky `availabilityTopic` přejde Thing do stavu OFFLINE, když zařízení
   vypadne (LWT) nebo se restartuje kvůli OTA; totéž ukazuje `HDO_Reachable`.
 - `HDO_LowTariff` = ON znamená nízký tarif (NT). Na něj lze navázat pravidla,
