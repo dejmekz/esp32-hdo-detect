@@ -32,6 +32,18 @@
 
 U HDO vstupu použij externí pull-up na 3,3 V (např. 10 kΩ), pokud jej již nezajišťuje tvoje zapojení PC817C.
 
+### Časy nízkého tarifu (NT)
+Rozpis HDO pro toto odběrné místo:
+
+| Dny | NT |
+|---|---|
+| pracovní dny | 01:15–05:11, 13:55–17:11, 22:30–23:35 |
+| víkend | 01:35–06:50, 15:35–18:31 |
+
+Naměřené přepnutí (pracovní dny, 22.–23. 10. 2026) přichází o 3–6 min později
+než podle rozpisu: 01:19–05:14, 13:58–17:15, 22:36–23:38. Zpoždění vzniká před
+ESP32 (signál HDO, přijímač v elektroměru) - debounce vstupu je jen 50 ms.
+
 ## Build
 1. Zkopíruj `src/secrets.example.h` na `src/secrets.h` a vyplň Wi-Fi/MQTT údaje (`secrets.h` je v `.gitignore`).
 2. Zkopíruj `ota.secret.ini.example` na `ota.secret.ini` a nastav stejné heslo jako `OTA_PASSWORD` v `secrets.h`.
